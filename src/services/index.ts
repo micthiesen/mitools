@@ -1,1 +1,1 @@
-export * as pushover from "./pushover.js";
+export * from "./pushover.js";

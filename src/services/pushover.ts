@@ -1,6 +1,6 @@
 import https from "node:https";
 import { URLSearchParams } from "node:url";
-import Injector from "../config/Injector.js";
+import { Injector } from "../config/Injector.js";
 
 export interface PushoverMessage {
   message: string;
@@ -12,7 +12,7 @@ export interface PushoverMessage {
   timestamp?: number;
 }
 
-export async function sendNotification(message: PushoverMessage): Promise<void> {
+export async function notify(message: PushoverMessage): Promise<void> {
   return new Promise((resolve, reject) => {
     const params = new URLSearchParams({
       token: Injector.config.PUSHOVER_TOKEN,

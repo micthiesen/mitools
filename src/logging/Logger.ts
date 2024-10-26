@@ -1,5 +1,5 @@
-import Injector from "../config/Injector.js";
-import { sendNotification } from "../services/pushover.js";
+import { Injector } from "../config/Injector.js";
+import { notify } from "../services/pushover.js";
 import { LogLevel } from "./types.js";
 
 const LOG_LEVEL_MAP: Record<LogLevel, number> = {
@@ -15,7 +15,7 @@ const LOG_PREFIX_MAP: Record<LogLevel, string> = {
   [LogLevel.ERROR]: "[ERROR]",
 };
 
-export default class Logger {
+export class Logger {
   public constructor(public name: string) {}
 
   public extend(name: string): Logger {
@@ -48,7 +48,7 @@ export default class Logger {
   public error(message: string, ...args: any[]) {
     this.log(LogLevel.ERROR, message, ...args);
     (async () => {
-      sendNotification({
+      notify({
         title: `Error: ${message}`,
         message: `${args}`,
       });

@@ -4,7 +4,7 @@ export interface InjectorDeps {
   config: BaseConfig;
 }
 
-export default class Injector {
+export class Injector {
   private static deps_: InjectorDeps | null = null;
 
   public static configure(deps: InjectorDeps) {

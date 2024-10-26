@@ -1,2 +1,2 @@
-export * as base from "./base.js";
-export * as Injector from "./Injector.js";
+export * from "./base.js";
+export * from "./Injector.js";

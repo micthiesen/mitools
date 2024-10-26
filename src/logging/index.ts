@@ -1,2 +1,2 @@
-export * as Logger from "./Logger.js";
-export * as types from "./types.js";
+export * from "./Logger.js";
+export * from "./types.js";
