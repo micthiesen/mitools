@@ -1,0 +1,29 @@
+{
+  "files": {
+    "ignore": ["dist"]
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "style": {
+        "noUselessElse": "off",
+        "noNonNullAssertion": "off"
+      },
+      "suspicious": {
+        "noExplicitAny": "off",
+        "noShadowRestrictedNames": "off",
+        "noControlCharactersInRegex": "off"
+      },
+      "complexity": {
+        "noStaticOnlyClass": "off"
+      }
+    }
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "lineWidth": 88
+  },
+  "organizeImports": {
+    "enabled": false
+  }
+}
