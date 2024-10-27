@@ -1,11 +1,12 @@
 {
   "name": "@micthiesen/mitools",
-  "version": "1.1.8",
+  "version": "1.2.0",
   "type": "module",
   "exports": {
     "./collections": "./dist/collections/index.js",
     "./config": "./dist/config/index.js",
     "./docstore": "./dist/persistence/docstore.js",
+    "./entities": "./dist/persistence/entities.js",
     "./logging": "./dist/logging/index.js",
     "./pushover": "./dist/services/pushover.js",
     "./types": "./dist/types/index.js"
