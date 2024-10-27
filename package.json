@@ -5,6 +5,7 @@
   "exports": {
     "./collections": "./dist/collections/index.js",
     "./config": "./dist/config/index.js",
+    "./docstore": "./dist/persistence/docstore.js",
     "./logging": "./dist/logging/index.js",
     "./pushover": "./dist/services/pushover.js"
   },
@@ -17,10 +18,13 @@
     "publish": "pnpm build && pnpm publish --access public"
   },
   "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "cbor": "^9.0.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.3",
+    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^20.14.12",
     "tsx": "^4.7.1",
     "typescript": "^5.0.4"
