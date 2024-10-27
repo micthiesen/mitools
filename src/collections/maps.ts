@@ -3,6 +3,11 @@ export class BetterMap<K, V> extends Map<K, V> {
     if (!this.has(key)) throw new Error(`Key not found: ${key}`);
     return this.get(key)!;
   }
+
+  public getOrSet(key: K, factory: () => V): V {
+    if (!this.has(key)) this.set(key, factory());
+    return this.get(key)!;
+  }
 }
 
 export class DefaultMap<K, V> extends BetterMap<K, V> {
