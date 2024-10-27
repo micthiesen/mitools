@@ -22,6 +22,8 @@ function initialize(): Database.Database {
     )
   `)
     .run();
+
+  logger.debug("Initialized docstore");
   return db_;
 }
 
