@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import * as cbor from "cbor";
+import { decode, encode } from "cbor";
 import { Logger } from "../logging/Logger.js";
 
 const logger = new Logger("docstore");
@@ -35,7 +35,7 @@ export function getDoc<T = unknown>(pk: string): T | undefined {
   const stmt = db.prepare("SELECT data FROM blobs WHERE pk = ?");
   const row = stmt.get(pk) as { data: Buffer } | undefined;
   if (row) {
-    const data = cbor.decode(row.data);
+    const data = decode(row.data);
     logger.debug(`Found "${pk}" in docstore`, data);
     return data;
   }
@@ -54,6 +54,6 @@ export function upsertDoc<T = unknown>(pk: string, data: T): void {
     ON CONFLICT(pk) DO UPDATE SET data=excluded.data
   `);
 
-  stmt.run(pk, cbor.encode(data));
+  stmt.run(pk, encode(data));
   logger.debug(`Upserted "${pk}" in docstore`, data);
 }
