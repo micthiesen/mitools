@@ -1,13 +1,14 @@
 {
   "name": "@micthiesen/mitools",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "type": "module",
   "exports": {
     "./collections": "./dist/collections/index.js",
     "./config": "./dist/config/index.js",
     "./docstore": "./dist/persistence/docstore.js",
     "./logging": "./dist/logging/index.js",
-    "./pushover": "./dist/services/pushover.js"
+    "./pushover": "./dist/services/pushover.js",
+    "./types": "./dist/types/index.js"
   },
   "scripts": {
     "build": "rm -fr ./dist && tsc",
