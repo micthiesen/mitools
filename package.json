@@ -2,10 +2,14 @@
   "name": "@micthiesen/mitools",
   "version": "1.1.2",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "exports": {
+    "./collections": "./dist/collections/index.js",
+    "./config": "./dist/config/index.js",
+    "./logging": "./dist/logging/index.js",
+    "./pushover": "./dist/services/pushover.js"
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "rm -fr ./dist && tsc",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint .",
     "format": "biome format .",
