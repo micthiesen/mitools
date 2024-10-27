@@ -7,6 +7,7 @@ export const baseConfigSchema = z.object({
   PUSHOVER_USER: z.string(),
   PUSHOVER_TOKEN: z.string(),
   DOCKERIZED: z.string().optional().default("false").transform(stringBoolean),
+  DB_NAME: z.string().optional().default("docstore"),
 });
 
 const PRIVATE_CONFIG_KEYS: (string & keyof BaseConfig)[] = [

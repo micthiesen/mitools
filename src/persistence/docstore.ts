@@ -5,28 +5,30 @@ import { Logger } from "../logging/Logger.js";
 
 const logger = new Logger("Docstore");
 
-let db_: Database.Database | undefined;
+// A map is used mostly for tests with different databases
+const dbMap = new Map<string, Database.Database>();
 
 function initialize(): Database.Database {
+  const db_ = dbMap.get(Injector.config.DB_NAME);
   if (db_) return db_;
 
-  const path = Injector.config.DOCKERIZED ? "/data/docstore.db" : "docstore.db";
-  db_ = new Database(path);
+  const dbName = Injector.config.DB_NAME;
+  const path = Injector.config.DOCKERIZED ? `/data/${dbName}` : dbName;
+  const db = new Database(path);
 
-  db_.pragma("journal_mode = WAL");
-  db_.pragma("synchronous = NORMAL");
+  db.pragma("journal_mode = WAL");
+  db.pragma("synchronous = NORMAL");
 
-  db_
-    .prepare(`
+  db.prepare(`
     CREATE TABLE IF NOT EXISTS blobs (
       pk   TEXT PRIMARY KEY,
       data BLOB
     )
-  `)
-    .run();
+  `).run();
 
   logger.debug("Initialized docstore");
-  return db_;
+  dbMap.set(dbName, db);
+  return db;
 }
 
 /**
@@ -58,4 +60,12 @@ export function upsertDoc<T = unknown>(pk: string, data: T): void {
 
   stmt.run(pk, Encoder.encodeOne(data));
   logger.debug(`Upserted "${pk}" in docstore`, data);
+}
+
+/**
+ * Clears the docstore
+ */
+export function clearDocstore(): void {
+  const db = initialize();
+  db.prepare("DELETE FROM blobs").run();
 }

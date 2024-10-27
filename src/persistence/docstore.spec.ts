@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { Injector } from "../config/Injector.js";
 import { LogLevel } from "../logging/types.js";
-import { getDoc, upsertDoc } from "./docstore.js";
+import { clearDocstore, getDoc, upsertDoc } from "./docstore.js";
 
 Injector.configure({
   config: {
@@ -9,8 +9,10 @@ Injector.configure({
     PUSHOVER_TOKEN: "fake-token",
     PUSHOVER_USER: "fake-user",
     DOCKERIZED: false,
+    DB_NAME: "docstore.spec.db",
   },
 });
+beforeAll(() => clearDocstore());
 
 describe("docstore", () => {
   it("should store and retrieve a blob", () => {
