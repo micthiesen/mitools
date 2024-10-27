@@ -8,6 +8,7 @@ Injector.configure({
     LOG_LEVEL: LogLevel.DEBUG,
     PUSHOVER_TOKEN: "fake-token",
     PUSHOVER_USER: "fake-user",
+    DOCKERIZED: false,
   },
 });
 

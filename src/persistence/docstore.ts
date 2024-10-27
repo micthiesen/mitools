@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { Decoder, Encoder } from "cbor";
+import { Injector } from "../config/Injector.js";
 import { Logger } from "../logging/Logger.js";
 
 const logger = new Logger("Docstore");
@@ -9,7 +10,8 @@ let db_: Database.Database | undefined;
 function initialize(): Database.Database {
   if (db_) return db_;
 
-  db_ = new Database("docstore.db");
+  const path = Injector.config.DOCKERIZED ? "/data/docstore.db" : "docstore.db";
+  db_ = new Database(path);
 
   db_.pragma("journal_mode = WAL");
   db_.pragma("synchronous = NORMAL");

@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { LogLevel } from "../logging/types.js";
 
+export const stringBoolean = (value: string): boolean => value.toLowerCase() === "true";
 export const baseConfigSchema = z.object({
   LOG_LEVEL: z.nativeEnum(LogLevel).optional().default(LogLevel.INFO),
   PUSHOVER_USER: z.string(),
   PUSHOVER_TOKEN: z.string(),
+  DOCKERIZED: z.string().optional().default("false").transform(stringBoolean),
 });
 
 const PRIVATE_CONFIG_KEYS: (string & keyof BaseConfig)[] = [
