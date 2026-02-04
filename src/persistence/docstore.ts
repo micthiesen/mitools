@@ -48,6 +48,16 @@ export function getDoc<T = unknown>(pk: string): T | undefined {
 }
 
 /**
+ * Retrieves all documents matching a given primary key prefix
+ */
+export function getDocsByPrefix<T = unknown>(prefix: string): T[] {
+  const db = initialize();
+  const stmt = db.prepare("SELECT data FROM blobs WHERE pk LIKE ?");
+  const rows = stmt.all(`${prefix}%`) as { data: Buffer }[];
+  return rows.map((row) => Decoder.decodeFirstSync(row.data));
+}
+
+/**
  * Upserts a document in the docstore
  */
 export function upsertDoc<T = unknown>(pk: string, data: T): void {

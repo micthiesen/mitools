@@ -1,6 +1,6 @@
 import { Logger } from "../logging/Logger.js";
 import { kebabToTitleCase } from "../utils/strings.js";
-import { getDoc, upsertDoc } from "./docstore.js";
+import { getDoc, getDocsByPrefix, upsertDoc } from "./docstore.js";
 
 const logger = new Logger("Entities");
 
@@ -34,6 +34,12 @@ export class Entity<Data, PKProps extends readonly (keyof Data)[]> {
       this.logger.debug(`"${this.getPk(arg)}" not found in docstore`);
     }
     return doc;
+  }
+
+  public getAll(): Data[] {
+    const docs = getDocsByPrefix<Data>(`$${this.name}#`);
+    this.logger.debug(`Found ${docs.length} "${this.name}" entities`);
+    return docs;
   }
 
   public upsert(data: Data): void {
