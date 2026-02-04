@@ -38,6 +38,7 @@
     "node": "24.13.0",
     "pnpm": "10.28.2"
   },
+  "packageManager": "pnpm@10.28.2",
   "files": ["dist"],
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
