@@ -1,6 +1,6 @@
 import { Injector } from "../config/Injector.js";
 import { notify } from "../services/pushover.js";
-import { LogLevel } from "./types.js";
+import { type LoggerOptions, type LogItem, LogLevel } from "./types.js";
 
 const LOG_LEVEL_MAP: Record<LogLevel, number> = {
   [LogLevel.DEBUG]: 10,
@@ -16,10 +16,18 @@ const LOG_PREFIX_MAP: Record<LogLevel, string> = {
 };
 
 export class Logger {
-  public constructor(public name: string) {}
+  private options: LoggerOptions;
+  private capturedLogs: LogItem[] = [];
 
-  public extend(name: string): Logger {
-    return new Logger(`${this.name}:${name}`);
+  public constructor(
+    public name: string,
+    options?: Partial<LoggerOptions>,
+  ) {
+    this.options = { capture: options?.capture ?? false };
+  }
+
+  public extend(name: string | null, options?: Partial<LoggerOptions>): Logger {
+    return new Logger(name ? `${this.name}:${name}` : this.name, options);
   }
 
   private static get logLevelNum() {
@@ -31,6 +39,7 @@ export class Logger {
     if (levelNum < Logger.logLevelNum) return;
     const messageFinal = `${LOG_PREFIX_MAP[level]} <${this.name}> ${message}`;
     console[level](messageFinal, ...args);
+    if (this.options.capture) this.capturedLogs.push({ level, message, args });
   }
 
   public debug(message: string, ...args: any[]) {
@@ -53,5 +62,17 @@ export class Logger {
         message: `${args}`,
       });
     })();
+  }
+
+  public getCapturedLogs(): LogItem[] {
+    if (!this.options.capture)
+      throw new Error("Cannot get logs when capture is disabled");
+    return this.capturedLogs;
+  }
+
+  public clearCapturedLogs() {
+    if (!this.options.capture)
+      throw new Error("Cannot clear logs when capture is disabled");
+    this.capturedLogs = [];
   }
 }

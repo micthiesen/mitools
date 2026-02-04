@@ -4,3 +4,13 @@ export enum LogLevel {
   WARN = "warn",
   ERROR = "error",
 }
+
+export interface LoggerOptions {
+  capture: boolean;
+}
+
+export interface LogItem {
+  level: LogLevel;
+  message: string;
+  args: any[];
+}
