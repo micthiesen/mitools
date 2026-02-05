@@ -41,6 +41,11 @@ jobs:
         run: pnpm run build
 
       - name: Publish to npm
-        uses: JS-DevTools/npm-publish@v3
-        with:
-          provenance: true
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          PACKAGE=$(node -p "require('./package.json').name")
+          if npm view "${PACKAGE}@${VERSION}" version 2>/dev/null; then
+            echo "Version ${VERSION} already published, skipping"
+          else
+            pnpm publish --provenance --access public --no-git-checks
+          fi
