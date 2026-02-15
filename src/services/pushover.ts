@@ -10,12 +10,13 @@ export interface PushoverMessage {
   priority?: number;
   sound?: string;
   timestamp?: number;
+  token?: string;
 }
 
 export async function notify(message: PushoverMessage): Promise<void> {
   return new Promise((resolve, reject) => {
     const params = new URLSearchParams({
-      token: Injector.config.PUSHOVER_TOKEN,
+      token: message.token ?? Injector.config.PUSHOVER_TOKEN,
       user: Injector.config.PUSHOVER_USER,
       message: message.message,
       ...(message.title && { title: message.title }),
