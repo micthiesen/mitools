@@ -59,7 +59,10 @@ export class Logger {
     (async () => {
       notify({
         title: `Error: ${message}`,
-        message: `${args}`,
+        message:
+          args.length > 0
+            ? args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")
+            : message,
       });
     })();
   }
