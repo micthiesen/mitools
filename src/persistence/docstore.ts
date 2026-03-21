@@ -73,6 +73,63 @@ export function upsertDoc<T = unknown>(pk: string, data: T): void {
 }
 
 /**
+ * Deletes a single document by primary key.
+ * Returns true if a document was deleted, false if it didn't exist.
+ */
+export function deleteDoc(pk: string): boolean {
+  const db = initialize();
+  const result = db.prepare("DELETE FROM blobs WHERE pk = ?").run(pk);
+  const deleted = result.changes > 0;
+  logger.debug(`${deleted ? "Deleted" : "No doc found for"} "${pk}" in docstore`);
+  return deleted;
+}
+
+/**
+ * Deletes all documents matching a given primary key prefix.
+ * Returns the number of documents deleted.
+ */
+export function deleteDocsByPrefix(prefix: string): number {
+  const db = initialize();
+  const result = db.prepare("DELETE FROM blobs WHERE pk LIKE ?").run(`${prefix}%`);
+  logger.debug(`Deleted ${result.changes} docs with prefix "${prefix}"`);
+  return result.changes;
+}
+
+/**
+ * Checks whether a document exists for a given primary key without deserializing.
+ */
+export function hasDoc(pk: string): boolean {
+  const db = initialize();
+  const row = db.prepare("SELECT 1 FROM blobs WHERE pk = ?").get(pk);
+  return row !== undefined;
+}
+
+/**
+ * Counts documents matching a given primary key prefix.
+ */
+export function countByPrefix(prefix: string): number {
+  const db = initialize();
+  const row = db.prepare("SELECT COUNT(*) as count FROM blobs WHERE pk LIKE ?").get(`${prefix}%`) as { count: number };
+  return row.count;
+}
+
+/**
+ * Returns all primary keys matching a given prefix.
+ */
+export function getKeysByPrefix(prefix: string): string[] {
+  const db = initialize();
+  const rows = db.prepare("SELECT pk FROM blobs WHERE pk LIKE ?").all(`${prefix}%`) as { pk: string }[];
+  return rows.map((row) => row.pk);
+}
+
+/**
+ * Escape hatch: returns the raw better-sqlite3 Database instance.
+ */
+export function getDb(): Database.Database {
+  return initialize();
+}
+
+/**
  * Clears the docstore
  */
 export function clearDocstore(): void {

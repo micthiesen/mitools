@@ -1,6 +1,15 @@
 import { Logger } from "../logging/Logger.js";
 import { kebabToTitleCase } from "../utils/strings.js";
-import { getDoc, getDocsByPrefix, upsertDoc } from "./docstore.js";
+import {
+  countByPrefix,
+  deleteDoc,
+  deleteDocsByPrefix,
+  getDoc,
+  getDocsByPrefix,
+  getKeysByPrefix,
+  hasDoc,
+  upsertDoc,
+} from "./docstore.js";
 
 const logger = new Logger("Entities");
 
@@ -45,5 +54,43 @@ export class Entity<Data, PKProps extends readonly (keyof Data)[]> {
   public upsert(data: Data): void {
     upsertDoc(this.getPk(data), data);
     this.logger.debug(`Upserted "${this.getPk(data)}" in docstore`, data);
+  }
+
+  public delete(arg: Pick<Data, PKProps[number]>): boolean {
+    const pk = this.getPk(arg);
+    const deleted = deleteDoc(pk);
+    this.logger.debug(`${deleted ? "Deleted" : "Not found"} "${pk}"`);
+    return deleted;
+  }
+
+  public deleteAll(): number {
+    const count = deleteDocsByPrefix(`$${this.name}#`);
+    this.logger.debug(`Deleted ${count} "${this.name}" entities`);
+    return count;
+  }
+
+  public has(arg: Pick<Data, PKProps[number]>): boolean {
+    return hasDoc(this.getPk(arg));
+  }
+
+  public count(): number {
+    return countByPrefix(`$${this.name}#`);
+  }
+
+  public patch(arg: Pick<Data, PKProps[number]>, partial: Partial<Omit<Data, PKProps[number]>>): Data | undefined {
+    const pk = this.getPk(arg);
+    const existing = getDoc<Data>(pk);
+    if (!existing) {
+      this.logger.debug(`Cannot patch "${pk}", not found`);
+      return undefined;
+    }
+    const updated = { ...existing, ...partial } as Data;
+    upsertDoc(pk, updated);
+    this.logger.debug(`Patched "${pk}" in docstore`, updated);
+    return updated;
+  }
+
+  public keys(): string[] {
+    return getKeysByPrefix(`$${this.name}#`);
   }
 }
