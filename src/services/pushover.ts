@@ -1,5 +1,3 @@
-import https from "node:https";
-import { URLSearchParams } from "node:url";
 import { Injector } from "../config/Injector.js";
 
 export interface PushoverMessage {
@@ -14,55 +12,28 @@ export interface PushoverMessage {
 }
 
 export async function notify(message: PushoverMessage): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const params = new URLSearchParams({
-      token: message.token ?? Injector.config.PUSHOVER_TOKEN,
-      user: Injector.config.PUSHOVER_USER,
-      message: message.message,
-      ...(message.title && { title: message.title }),
-      ...(message.url && { url: message.url }),
-      ...(message.url_title && { url_title: message.url_title }),
-      ...(message.priority !== undefined && {
-        priority: message.priority.toString(),
-      }),
-      ...(message.sound && { sound: message.sound }),
-      ...(message.timestamp && { timestamp: message.timestamp.toString() }),
-    });
-
-    const options = {
-      hostname: "api.pushover.net",
-      port: 443,
-      path: "/1/messages.json",
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Content-Length": params.toString().length,
-      },
-    };
-
-    const req = https.request(options, (res) => {
-      let data = "";
-
-      res.on("data", (chunk) => {
-        data += chunk;
-      });
-
-      res.on("end", () => {
-        if (res.statusCode === 200) {
-          resolve();
-        } else {
-          reject(
-            new Error(`Pushover API returned status code ${res.statusCode}: ${data}`),
-          );
-        }
-      });
-    });
-
-    req.on("error", (error) => {
-      reject(error);
-    });
-
-    req.write(params.toString());
-    req.end();
+  const body = new URLSearchParams({
+    token: message.token ?? Injector.config.PUSHOVER_TOKEN,
+    user: Injector.config.PUSHOVER_USER,
+    message: message.message,
+    ...(message.title && { title: message.title }),
+    ...(message.url && { url: message.url }),
+    ...(message.url_title && { url_title: message.url_title }),
+    ...(message.priority !== undefined && {
+      priority: message.priority.toString(),
+    }),
+    ...(message.sound && { sound: message.sound }),
+    ...(message.timestamp && { timestamp: message.timestamp.toString() }),
   });
+
+  const res = await fetch("https://api.pushover.net/1/messages.json", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+
+  if (!res.ok) {
+    const data = await res.text();
+    throw new Error(`Pushover API returned status code ${res.status}: ${data}`);
+  }
 }

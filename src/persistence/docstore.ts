@@ -130,6 +130,19 @@ export function getDb(): Database.Database {
 }
 
 /**
+ * Closes the database connection and removes it from the pool.
+ */
+export function closeDb(): void {
+  const dbName = Injector.config.DB_NAME;
+  const db = dbMap.get(dbName);
+  if (db) {
+    db.close();
+    dbMap.delete(dbName);
+    logger.debug("Closed docstore");
+  }
+}
+
+/**
  * Clears the docstore
  */
 export function clearDocstore(): void {

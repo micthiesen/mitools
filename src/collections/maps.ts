@@ -13,7 +13,7 @@ export class BetterMap<K, V> extends Map<K, V> {
 export class DefaultMap<K, V> extends BetterMap<K, V> {
   private readonly factory: () => V;
 
-  public constructor(factory: () => V, initial: [K, V][]) {
+  public constructor(factory: () => V, initial: [K, V][] = []) {
     super(initial);
     this.factory = factory;
   }

@@ -17,6 +17,10 @@ export class Injector {
     return Injector.deps_;
   }
 
+  public static reset(): void {
+    Injector.deps_ = null;
+  }
+
   public static get config(): BaseConfig {
     return Injector.deps.config;
   }

@@ -56,15 +56,13 @@ export class Logger {
 
   public error(message: string, ...args: any[]) {
     this.log(LogLevel.ERROR, message, ...args);
-    (async () => {
-      notify({
-        title: `Error: ${message}`,
-        message:
-          args.length > 0
-            ? args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")
-            : message,
-      });
-    })();
+    notify({
+      title: `Error: ${message}`,
+      message:
+        args.length > 0
+          ? args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")
+          : message,
+    }).catch((err) => console.error("Failed to send Pushover notification:", err));
   }
 
   public getCapturedLogs(): LogItem[] {
