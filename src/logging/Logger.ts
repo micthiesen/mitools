@@ -65,8 +65,17 @@ export class Logger {
     return new Logger(name ? `${this.name}:${name}` : this.name, options);
   }
 
+  /**
+   * Returns the configured log level threshold. Falls back to DEBUG (log
+   * everything) if the Injector hasn't been configured yet, so Logger
+   * can be used safely before loadConfig() runs.
+   */
   private static get logLevelNum() {
-    return LOG_LEVEL_MAP[Injector.config.LOG_LEVEL];
+    try {
+      return LOG_LEVEL_MAP[Injector.config.LOG_LEVEL];
+    } catch {
+      return LOG_LEVEL_MAP[LogLevel.DEBUG];
+    }
   }
 
   public log(level: LogLevel, message: string, ...args: any[]) {
