@@ -81,7 +81,8 @@ export class Logger {
   public log(level: LogLevel, message: string, ...args: any[]) {
     const levelNum = LOG_LEVEL_MAP[level];
     if (levelNum < Logger.logLevelNum) return;
-    const messageFinal = `${LOG_PREFIX_MAP[level]} <${this.name}> ${message}`;
+    const timestamp = new Date().toISOString().slice(11, 23); // HH:mm:ss.mmm
+    const messageFinal = `${timestamp} ${LOG_PREFIX_MAP[level]} <${this.name}> ${message}`;
     console[level](messageFinal, ...args);
     if (this.options.capture) this.capturedLogs.push({ level, message, args });
   }
