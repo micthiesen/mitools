@@ -77,7 +77,10 @@ export class Entity<Data, PKProps extends readonly (keyof Data)[]> {
     return countByPrefix(`$${this.name}#`);
   }
 
-  public patch(arg: Pick<Data, PKProps[number]>, partial: Partial<Omit<Data, PKProps[number]>>): Data | undefined {
+  public patch(
+    arg: Pick<Data, PKProps[number]>,
+    partial: Partial<Omit<Data, PKProps[number]>>,
+  ): Data | undefined {
     const pk = this.getPk(arg);
     const existing = getDoc<Data>(pk);
     if (!existing) {

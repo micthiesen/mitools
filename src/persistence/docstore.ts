@@ -109,7 +109,9 @@ export function hasDoc(pk: string): boolean {
  */
 export function countByPrefix(prefix: string): number {
   const db = initialize();
-  const row = db.prepare("SELECT COUNT(*) as count FROM blobs WHERE pk LIKE ?").get(`${prefix}%`) as { count: number };
+  const row = db
+    .prepare("SELECT COUNT(*) as count FROM blobs WHERE pk LIKE ?")
+    .get(`${prefix}%`) as { count: number };
   return row.count;
 }
 
@@ -118,7 +120,9 @@ export function countByPrefix(prefix: string): number {
  */
 export function getKeysByPrefix(prefix: string): string[] {
   const db = initialize();
-  const rows = db.prepare("SELECT pk FROM blobs WHERE pk LIKE ?").all(`${prefix}%`) as { pk: string }[];
+  const rows = db.prepare("SELECT pk FROM blobs WHERE pk LIKE ?").all(`${prefix}%`) as {
+    pk: string;
+  }[];
   return rows.map((row) => row.pk);
 }
 
