@@ -12,9 +12,15 @@ export interface PushoverMessage {
 }
 
 export async function notify(message: PushoverMessage): Promise<void> {
+  const token = message.token ?? Injector.config.PUSHOVER_TOKEN;
+  const user = Injector.config.PUSHOVER_USER;
+
+  // Skip silently if Pushover credentials are not configured
+  if (!token || !user) return;
+
   const body = new URLSearchParams({
-    token: message.token ?? Injector.config.PUSHOVER_TOKEN,
-    user: Injector.config.PUSHOVER_USER,
+    token,
+    user,
     message: message.message,
     ...(message.title && { title: message.title }),
     ...(message.url && { url: message.url }),

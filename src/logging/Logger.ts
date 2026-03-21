@@ -15,9 +15,44 @@ const LOG_PREFIX_MAP: Record<LogLevel, string> = {
   [LogLevel.ERROR]: "[ERROR]",
 };
 
+/**
+ * Notification payload passed to the onError hook.
+ */
+export interface ErrorNotification {
+  /** The logger name (e.g. "Main:Scheduler") */
+  loggerName: string;
+  /** The error message */
+  title: string;
+  /** Formatted details from the extra args, or the message itself if no args */
+  body: string;
+}
+
+/** Callback type for the error notification hook */
+export type OnErrorHook = (notification: ErrorNotification) => void;
+
+/**
+ * Default onError hook: sends to Pushover if credentials are configured.
+ * This preserves backwards compatibility for existing consumers.
+ */
+function defaultOnError(notification: ErrorNotification): void {
+  notify({
+    title: `Error: ${notification.title}`,
+    message: notification.body,
+  }).catch((err) => console.error("Failed to send Pushover notification:", err));
+}
+
 export class Logger {
   private options: LoggerOptions;
   private capturedLogs: LogItem[] = [];
+
+  /**
+   * Hook called on every .error() call, after the message is logged to console.
+   * Override with Logger.onError = yourHandler to redirect error notifications
+   * to Telegram, Slack, or any other channel.
+   *
+   * Set to null to disable error notifications entirely.
+   */
+  public static onError: OnErrorHook | null = defaultOnError;
 
   public constructor(
     public name: string,
@@ -56,13 +91,14 @@ export class Logger {
 
   public error(message: string, ...args: any[]) {
     this.log(LogLevel.ERROR, message, ...args);
-    notify({
-      title: `Error: ${message}`,
-      message:
+
+    if (Logger.onError) {
+      const body =
         args.length > 0
           ? args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")
-          : message,
-    }).catch((err) => console.error("Failed to send Pushover notification:", err));
+          : message;
+      Logger.onError({ loggerName: this.name, title: message, body });
+    }
   }
 
   public getCapturedLogs(): LogItem[] {

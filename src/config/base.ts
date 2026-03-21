@@ -4,8 +4,8 @@ import { LogLevel } from "../logging/types.js";
 export const stringBoolean = (value: string): boolean => value.toLowerCase() === "true";
 export const baseConfigSchema = z.object({
   LOG_LEVEL: z.nativeEnum(LogLevel).optional().default(LogLevel.INFO),
-  PUSHOVER_USER: z.string(),
-  PUSHOVER_TOKEN: z.string(),
+  PUSHOVER_USER: z.string().optional(),
+  PUSHOVER_TOKEN: z.string().optional(),
   DOCKERIZED: z.string().optional().default("false").transform(stringBoolean),
   DB_NAME: z.string().optional().default("docstore.db"),
 });
