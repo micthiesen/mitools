@@ -1,6 +1,6 @@
 {
   "name": "@micthiesen/mitools",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/micthiesen/mitools"
@@ -15,7 +15,8 @@
     "./logfile": "./dist/services/logfile.js",
     "./pushover": "./dist/services/pushover.js",
     "./strings": "./dist/utils/strings.js",
-    "./types": "./dist/types/index.js"
+    "./types": "./dist/types/index.js",
+    "./vitest": "./dist/vitest/config.js"
   },
   "scripts": {
     "build": "rm -fr ./dist && tsc",
@@ -47,7 +48,7 @@
     "onlyBuiltDependencies": ["@biomejs/biome", "better-sqlite3", "esbuild"]
   },
   "packageManager": "pnpm@10.28.2",
-  "files": ["dist"],
+  "files": ["dist", "tsconfig", "biome.shared.json"],
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
   }
