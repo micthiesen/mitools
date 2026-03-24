@@ -11,9 +11,22 @@ export interface PushoverMessage {
   token?: string;
 }
 
+function getCredentials(): { token: string | undefined; user: string | undefined } {
+  try {
+    const config = Injector.config;
+    return { token: config.PUSHOVER_TOKEN, user: config.PUSHOVER_USER };
+  } catch {
+    return {
+      token: process.env.PUSHOVER_TOKEN,
+      user: process.env.PUSHOVER_USER,
+    };
+  }
+}
+
 export async function notify(message: PushoverMessage): Promise<void> {
-  const token = message.token ?? Injector.config.PUSHOVER_TOKEN;
-  const user = Injector.config.PUSHOVER_USER;
+  const creds = getCredentials();
+  const token = message.token ?? creds.token;
+  const user = creds.user;
 
   // Skip silently if Pushover credentials are not configured
   if (!token || !user) return;
