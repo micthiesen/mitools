@@ -16,29 +16,47 @@ const LOG_PREFIX_MAP: Record<LogLevel, string> = {
 };
 
 /**
- * Notification payload passed to the onError hook.
+ * Notification payload passed to log hooks.
  */
-export interface ErrorNotification {
+export interface LogNotification {
+  /** The log level */
+  level: LogLevel;
   /** The logger name (e.g. "Main:Scheduler") */
   loggerName: string;
-  /** The error message */
+  /** The log message */
   title: string;
   /** Formatted details from the extra args, or the message itself if no args */
   body: string;
 }
 
-/** Callback type for the error notification hook */
-export type OnErrorHook = (notification: ErrorNotification) => void;
+/** @deprecated Use LogNotification instead */
+export type ErrorNotification = LogNotification;
+
+/** Callback type for log hooks. Return a promise to have it tracked by flush(). */
+export type LogHook = (notification: LogNotification) => void | Promise<void>;
+
+/** @deprecated Use LogHook instead */
+export type OnErrorHook = LogHook;
 
 /**
  * Default onError hook: sends to Pushover if credentials are configured.
- * This preserves backwards compatibility for existing consumers.
  */
-function defaultOnError(notification: ErrorNotification): void {
+function defaultOnError(notification: LogNotification): void {
   notify({
     title: `Error: ${notification.title}`,
     message: notification.body,
   }).catch((err) => console.error("Failed to send Pushover notification:", err));
+}
+
+const pending = new Map<symbol, Promise<unknown>>();
+
+function trackHook(hook: LogHook, notification: LogNotification): void {
+  const result = hook(notification);
+  if (result && typeof result.then === "function") {
+    const id = Symbol();
+    const tracked = result.finally(() => pending.delete(id));
+    pending.set(id, tracked);
+  }
 }
 
 export class Logger {
@@ -50,9 +68,16 @@ export class Logger {
    * Override with Logger.onError = yourHandler to redirect error notifications
    * to Telegram, Slack, or any other channel.
    *
+   * If the hook returns a Promise, it is tracked and can be awaited via Logger.flush().
    * Set to null to disable error notifications entirely.
    */
-  public static onError: OnErrorHook | null = defaultOnError;
+  public static onError: LogHook | null = defaultOnError;
+
+  /**
+   * Optional hook called on every .warn() call.
+   * If the hook returns a Promise, it is tracked and can be awaited via Logger.flush().
+   */
+  public static onWarn: LogHook | null = null;
 
   public constructor(
     public name: string,
@@ -97,18 +122,36 @@ export class Logger {
 
   public warn(message: string, ...args: any[]) {
     this.log(LogLevel.WARN, message, ...args);
+
+    if (Logger.onWarn) {
+      trackHook(Logger.onWarn, this.buildNotification(LogLevel.WARN, message, args));
+    }
   }
 
   public error(message: string, ...args: any[]) {
     this.log(LogLevel.ERROR, message, ...args);
 
     if (Logger.onError) {
-      const body =
-        args.length > 0
-          ? args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")
-          : message;
-      Logger.onError({ loggerName: this.name, title: message, body });
+      trackHook(Logger.onError, this.buildNotification(LogLevel.ERROR, message, args));
     }
+  }
+
+  private buildNotification(
+    level: LogLevel,
+    message: string,
+    args: any[],
+  ): LogNotification {
+    const body =
+      args.length > 0
+        ? args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")
+        : message;
+    return { level, loggerName: this.name, title: message, body };
+  }
+
+  /** Await all pending hook promises (notifications, etc.). Call before process exit or Lambda return. */
+  public static async flush(): Promise<void> {
+    await Promise.all(pending.values());
+    pending.clear();
   }
 
   public getCapturedLogs(): LogItem[] {
