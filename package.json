@@ -1,6 +1,6 @@
 {
   "name": "@micthiesen/mitools",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/micthiesen/mitools"
@@ -17,7 +17,9 @@
     "./async": "./dist/async/index.js",
     "./strings": "./dist/utils/strings.js",
     "./types": "./dist/types/index.js",
+    "./http": "./dist/http/index.js",
     "./scheduling": "./dist/scheduling/index.js",
+    "./text": "./dist/text/index.js",
     "./markdown": "./dist/markdown/index.js",
     "./vitest": "./dist/vitest/config.js",
     "./biome.shared.json": "./biome.shared.json",
@@ -35,6 +37,7 @@
   "dependencies": {
     "better-sqlite3": "^12.8.0",
     "cbor": "^10.0.12",
+    "got": "^14.6.6",
     "node-cron": "^4.2.1",
     "p-queue": "^9.1.0",
     "zod": "^4.3.6"

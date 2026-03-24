@@ -95,3 +95,21 @@ export function tryCatchSync<T>(fn: () => T): Result<T> {
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+export class TimeoutError extends Error {
+  constructor(ms: number) {
+    super(`Timed out after ${ms}ms`);
+    this.name = "TimeoutError";
+  }
+}
+
+/** Races a promise against a timeout, rejecting with TimeoutError if the deadline is exceeded. */
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    promise,
+    new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new TimeoutError(ms)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
