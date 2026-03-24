@@ -1,1 +1,1 @@
-export * as maps from "./maps.js";
+export { BetterMap, DefaultMap } from "./maps.js";
