@@ -1,6 +1,7 @@
 {
+  "$schema": "https://biomejs.dev/schemas/2.3.11/schema.json",
   "extends": ["./biome.shared.json"],
   "files": {
-    "ignore": ["dist"]
+    "includes": ["src/**", "*.json"]
   }
 }
