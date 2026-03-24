@@ -1,6 +1,6 @@
 {
   "name": "@micthiesen/mitools",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/micthiesen/mitools"
@@ -16,7 +16,9 @@
     "./pushover": "./dist/services/pushover.js",
     "./strings": "./dist/utils/strings.js",
     "./types": "./dist/types/index.js",
-    "./vitest": "./dist/vitest/config.js"
+    "./vitest": "./dist/vitest/config.js",
+    "./biome.shared.json": "./biome.shared.json",
+    "./tsconfig/*.json": "./tsconfig/*.json"
   },
   "scripts": {
     "build": "rm -fr ./dist && tsc",
