@@ -1,6 +1,6 @@
 import { defineConfig } from "vitest/config";
 
-export const baseVitestConfig = defineConfig({
+export default defineConfig({
   test: {
     exclude: ["**/node_modules/**", "**/dist/**"],
   },
