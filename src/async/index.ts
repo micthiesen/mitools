@@ -67,14 +67,17 @@ export async function withRetry<T>(
   throw lastError;
 }
 
-export type Result<T, E = Error> = { ok: true; value: T } | { ok: false; error: E };
+export type Result<T, E = Error> =
+  | { ok: true; value: T; error?: never }
+  | { ok: false; error: E; value?: never };
 
 /** Wraps an async function call, returning a Result instead of throwing. */
 export async function tryCatch<T>(fn: () => Promise<T>): Promise<Result<T>> {
   try {
     return { ok: true, value: await fn() };
-  } catch (error) {
-    return { ok: false, error: error as Error };
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    return { ok: false, error };
   }
 }
 
@@ -82,8 +85,9 @@ export async function tryCatch<T>(fn: () => Promise<T>): Promise<Result<T>> {
 export function tryCatchSync<T>(fn: () => T): Result<T> {
   try {
     return { ok: true, value: fn() };
-  } catch (error) {
-    return { ok: false, error: error as Error };
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    return { ok: false, error };
   }
 }
 
