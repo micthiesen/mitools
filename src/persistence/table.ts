@@ -14,13 +14,13 @@ export interface IndexDef<T> {
   unique?: boolean;
 }
 
-export interface TableOptions<T> {
+export interface TableOptions<T extends object> {
   name: string;
-  columns: Record<keyof T, ColumnDef>;
+  columns: Record<keyof T & string, ColumnDef>;
   indexes?: IndexDef<T>[];
 }
 
-export class Table<T extends Record<string, unknown>> {
+export class Table<T extends object> {
   private readonly log: Logger;
   private readonly columnNames: (keyof T & string)[];
   private readonly primaryKeys: (keyof T & string)[];
