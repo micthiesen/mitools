@@ -68,15 +68,16 @@ export class Table<T extends object> {
     }
   }
 
-  insert(row: T): void {
+  insert(row: T): boolean {
     const db = getDb();
     const placeholders = this.columnNames.map(() => "?").join(", ");
     const sql =
       `INSERT OR IGNORE INTO ${this.options.name}` +
       ` (${this.columnNames.join(", ")}) VALUES (${placeholders})`;
     const values = this.columnNames.map((col) => row[col]);
-    db.prepare(sql).run(...values);
+    const result = db.prepare(sql).run(...values);
     this.log.debug("Insert (or ignore)", row);
+    return result.changes > 0;
   }
 
   upsert(row: T): void {
