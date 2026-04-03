@@ -1,6 +1,6 @@
 {
   "name": "@micthiesen/mitools",
-  "version": "2.3.3",
+  "version": "2.3.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/micthiesen/mitools"
@@ -15,7 +15,6 @@
     "./logging": "./dist/logging/index.js",
     "./logfile": "./dist/services/logfile.js",
     "./pushover": "./dist/services/pushover.js",
-    "./ntfy": "./dist/services/ntfy.js",
     "./async": "./dist/async/index.js",
     "./strings": "./dist/utils/strings.js",
     "./types": "./dist/types/index.js",
