@@ -1,6 +1,6 @@
 {
   "name": "@micthiesen/mitools",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/micthiesen/mitools"
@@ -35,8 +35,7 @@
     "lint": "biome lint .",
     "format": "biome format .",
     "check": "biome check .",
-    "test": "vitest",
-    "publish": "pnpm build && pnpm publish --access public"
+    "test": "vitest"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
