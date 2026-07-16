@@ -48,6 +48,23 @@ function defaultOnError(notification: LogNotification): void {
   }).catch((err) => console.error("Failed to send Pushover notification:", err));
 }
 
+/** Payload passed to the global onLog tap. */
+export interface LogTapItem {
+  /** Date.now() at the time of the log call */
+  timestamp: number;
+  level: LogLevel;
+  /** The logger name (e.g. "Main:LiveCheck") */
+  loggerName: string;
+  /** The raw message, no timestamp/prefix decoration */
+  message: string;
+  /** Extra args joined to a string, undefined if no args */
+  formattedArgs?: string;
+}
+
+function formatArgs(args: any[]): string {
+  return args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+}
+
 const pending = new Map<symbol, Promise<unknown>>();
 
 function trackHook(hook: LogHook, notification: LogNotification): void {
@@ -79,6 +96,14 @@ export class Logger {
    */
   public static onWarn: LogHook | null = null;
 
+  /**
+   * Optional global tap called for EVERY log call on every Logger instance,
+   * regardless of the configured LOG_LEVEL threshold. Console output is
+   * unaffected and still respects LOG_LEVEL. Must be synchronous and cheap;
+   * exceptions thrown by the tap never break logging.
+   */
+  public static onLog: ((item: LogTapItem) => void) | null = null;
+
   public constructor(
     public name: string,
     options?: Partial<LoggerOptions>,
@@ -104,6 +129,20 @@ export class Logger {
   }
 
   public log(level: LogLevel, message: string, ...args: any[]) {
+    if (Logger.onLog) {
+      try {
+        Logger.onLog({
+          timestamp: Date.now(),
+          level,
+          loggerName: this.name,
+          message,
+          formattedArgs: args.length > 0 ? formatArgs(args) : undefined,
+        });
+      } catch {
+        // a throwing tap must never break logging
+      }
+    }
+
     const levelNum = LOG_LEVEL_MAP[level];
     if (levelNum < Logger.logLevelNum) return;
     const timestamp = new Date().toISOString().slice(11, 23); // HH:mm:ss.mmm
@@ -141,10 +180,7 @@ export class Logger {
     message: string,
     args: any[],
   ): LogNotification {
-    const body =
-      args.length > 0
-        ? args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")
-        : message;
+    const body = args.length > 0 ? formatArgs(args) : message;
     return { level, loggerName: this.name, title: message, body };
   }
 
