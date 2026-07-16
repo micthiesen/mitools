@@ -1,0 +1,22 @@
+{
+  "project": "mitools",
+  "peers": {
+    "dotfiles": {
+      "path": "~/.dotfiles",
+      "layout": "rulesync",
+      "notes": "Source of the canonical sync skill; shares only the sync skill itself. Regenerates with `bash scripts/rulesync.sh`."
+    },
+    "omni-notify": {
+      "path": "../omni-notify",
+      "notes": "Downstream consumer of @micthiesen/mitools; origin of the upkeep skill."
+    }
+  },
+  "resources": [
+    {
+      "path": ".claude/skills/upkeep/",
+      "peers": ["omni-notify"],
+      "mode": "judgment",
+      "notes": "Shared shape only (sync remote -> survey -> research majors -> apply -> verify -> ship). Steps are environment-specific: omni-notify has a frontend workspace, Dockerfile, and LLM model IDs; mitools is a published library whose CI publishes to npm on a version bump. Port procedure improvements, never the project-specific steps."
+    }
+  ]
+}
