@@ -1,4 +1,4 @@
-import cron from "node-cron";
+import cron, { type ScheduledTask as CronScheduledTask } from "node-cron";
 import PQueue from "p-queue";
 import { sleep } from "../async/index.js";
 import type { Logger } from "../logging/Logger.js";
@@ -10,7 +10,7 @@ type RegisteredTask = {
 };
 
 type StartedTask = RegisteredTask & {
-  cronJob: cron.ScheduledTask;
+  cronJob: CronScheduledTask;
 };
 
 export class Scheduler {
