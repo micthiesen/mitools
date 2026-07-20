@@ -1,3 +1,4 @@
+import Database from "better-sqlite3";
 import { beforeAll, describe, expect, it } from "vitest";
 import { Injector } from "../config/Injector.js";
 import { LogLevel } from "../logging/types.js";
@@ -11,11 +12,25 @@ import {
   deleteDocsByPrefix,
   getDoc,
   getDocsByEntity,
+  getDocsByPrefix,
   getKeysByPrefix,
   hasDoc,
   touchDoc,
   upsertDoc,
 } from "./docstore.js";
+
+// Overwrite a row's payload with bytes CBOR can't decode (a map header that
+// promises a pair but ends early → "Insufficient data"), simulating a
+// truncated/corrupt on-disk blob. Uses a separate connection to the same WAL
+// file; the docstore's own connection reads the committed change.
+function corruptRow(pk: string): void {
+  const db = new Database("docstore.spec.db");
+  db.prepare("UPDATE blobs SET data = @data WHERE pk = @pk").run({
+    pk,
+    data: Buffer.from([0xa1, 0x61, 0x61]),
+  });
+  db.close();
+}
 
 Injector.configure({
   config: {
@@ -123,5 +138,42 @@ describe("docstore", () => {
     upsertDoc("t:3", "z", { expiresAt: Date.now() - 1 });
     expect(cleanupExpired()).toBeGreaterThanOrEqual(1);
     expect(getDoc("t:3")).toBeUndefined();
+  });
+
+  // Regression: cbor's sync encoders truncate output past the ~64KB stream
+  // highWaterMark, which silently corrupted every row larger than that.
+  it("round-trips payloads larger than the 64KB encoder highWaterMark", () => {
+    for (const size of [66_000, 300_000, 1_000_000]) {
+      const doc = { id: size, content: "a".repeat(size), tail: "sounds great!" };
+      upsertDoc(`big:${size}`, doc);
+      expect(getDoc(`big:${size}`)).toEqual(doc);
+    }
+  });
+
+  describe("corrupt rows", () => {
+    it("skips an unreadable row in getDocsByEntity without failing the read", () => {
+      upsertDoc("crp:1", { n: 1 }, { entity: "crp" });
+      upsertDoc("crp:bad", { n: 2 }, { entity: "crp" });
+      upsertDoc("crp:3", { n: 3 }, { entity: "crp" });
+      corruptRow("crp:bad");
+
+      expect(getDocsByEntity("crp")).toEqual([{ n: 1 }, { n: 3 }]);
+      expect(countByEntity("crp")).toBe(3); // row still on disk, repairable
+    });
+
+    it("skips an unreadable row in getDocsByPrefix", () => {
+      upsertDoc("cpf:1", "a");
+      upsertDoc("cpf:bad", "b");
+      corruptRow("cpf:bad");
+
+      expect(getDocsByPrefix("cpf:")).toEqual(["a"]);
+    });
+
+    it("reads a corrupt single row as absent rather than throwing", () => {
+      upsertDoc("cone:1", { ok: true });
+      corruptRow("cone:1");
+
+      expect(getDoc("cone:1")).toBeUndefined();
+    });
   });
 });

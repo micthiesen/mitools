@@ -99,8 +99,55 @@ function likePrefix(prefix: string): string {
   return `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 }
 
+// A single unreadable row (truncated/corrupt CBOR) must never abort a
+// whole-collection read: one bad blob would otherwise throw out of every
+// getAll()/getByPrefix() and take down every consumer of that collection.
+// Mirror migrate()'s isolation — warn, skip, and leave the row on disk so it
+// stays visible and repairable rather than being silently dropped forever.
+const CORRUPT_ROW = Symbol("corrupt-row");
+
+function decodeRow(pk: string, data: Buffer): unknown {
+  try {
+    return Decoder.decodeFirstSync(data);
+  } catch (err) {
+    logger.warn(
+      `Skipping unreadable docstore row "${pk}": ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return CORRUPT_ROW;
+  }
+}
+
+function decodeRows<T>(rows: { pk: string; data: Buffer }[]): T[] {
+  const out: T[] = [];
+  for (const row of rows) {
+    const data = decodeRow(row.pk, row.data);
+    if (data !== CORRUPT_ROW) out.push(data as T);
+  }
+  return out;
+}
+
+// cbor's synchronous encoders (Encoder.encodeOne / cbor.encode) read their
+// output stream exactly once, so any payload larger than the stream's
+// highWaterMark (~64KB) comes back SILENTLY TRUNCATED — the row then fails to
+// decode ("Insufficient data") on the next read and is corrupt on disk. The
+// encoder emits its chunks synchronously, so collect every one (no size
+// ceiling) instead of relying on that single read. See cbor's own encodeAsync,
+// which exists for exactly this reason.
+function encodeDoc(data: unknown): Buffer {
+  const chunks: Buffer[] = [];
+  const encoder = new Encoder();
+  encoder.on("data", (chunk: Buffer) => chunks.push(chunk));
+  encoder.pushAny(data);
+  encoder.end();
+  return Buffer.concat(chunks);
+}
+
 /**
- * Retrieves the document for a given primary key. Expired rows read as absent.
+ * Retrieves the document for a given primary key. Expired rows read as absent;
+ * an unreadable (corrupt) row is warned about and also read as absent rather
+ * than throwing.
  */
 export function getDoc<T = unknown>(pk: string): T | undefined {
   const db = initialize();
@@ -108,9 +155,10 @@ export function getDoc<T = unknown>(pk: string): T | undefined {
     .prepare(`SELECT data FROM blobs WHERE pk = @pk AND ${NOT_EXPIRED}`)
     .get({ pk, now: Date.now() }) as { data: Buffer } | undefined;
   if (row) {
-    const data = Decoder.decodeFirstSync(row.data);
+    const data = decodeRow(pk, row.data);
+    if (data === CORRUPT_ROW) return undefined;
     logger.debug(`Found "${pk}" in docstore`, data);
-    return data;
+    return data as T;
   }
 
   logger.debug(`"${pk}" not found in docstore`);
@@ -119,26 +167,31 @@ export function getDoc<T = unknown>(pk: string): T | undefined {
 /**
  * Retrieves all documents matching a given primary key prefix.
  * Escape-hatch API for raw docstore keys; Entity uses getDocsByEntity.
+ * Unreadable rows are skipped (warned) so one corrupt blob can't fail the read.
  */
 export function getDocsByPrefix<T = unknown>(prefix: string): T[] {
   const db = initialize();
   const rows = db
     .prepare(
-      `SELECT data FROM blobs WHERE pk LIKE @like ESCAPE '\\' AND ${NOT_EXPIRED}`,
+      `SELECT pk, data FROM blobs WHERE pk LIKE @like ESCAPE '\\' AND ${NOT_EXPIRED}`,
     )
-    .all({ like: likePrefix(prefix), now: Date.now() }) as { data: Buffer }[];
-  return rows.map((row) => Decoder.decodeFirstSync(row.data));
+    .all({ like: likePrefix(prefix), now: Date.now() }) as {
+    pk: string;
+    data: Buffer;
+  }[];
+  return decodeRows<T>(rows);
 }
 
 /**
- * Retrieves all documents belonging to an entity. Expired rows are skipped.
+ * Retrieves all documents belonging to an entity. Expired rows are skipped, as
+ * are unreadable (corrupt) rows so one bad blob can't fail the whole read.
  */
 export function getDocsByEntity<T = unknown>(entity: string): T[] {
   const db = initialize();
   const rows = db
-    .prepare(`SELECT data FROM blobs WHERE entity = @entity AND ${NOT_EXPIRED}`)
-    .all({ entity, now: Date.now() }) as { data: Buffer }[];
-  return rows.map((row) => Decoder.decodeFirstSync(row.data));
+    .prepare(`SELECT pk, data FROM blobs WHERE entity = @entity AND ${NOT_EXPIRED}`)
+    .all({ entity, now: Date.now() }) as { pk: string; data: Buffer }[];
+  return decodeRows<T>(rows);
 }
 
 /**
@@ -162,7 +215,7 @@ export function upsertDoc<T = unknown>(pk: string, data: T, meta: DocMeta = {}):
     version: meta.version ?? 0,
     expires_at: meta.expiresAt ?? null,
     updated_at: meta.updatedAt ?? Date.now(),
-    data: Encoder.encodeOne(data),
+    data: encodeDoc(data),
   });
   logger.debug(`Upserted "${pk}" in docstore`, data);
 }
