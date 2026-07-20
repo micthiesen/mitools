@@ -169,11 +169,14 @@ describe("docstore", () => {
       expect(getDocsByPrefix("cpf:")).toEqual(["a"]);
     });
 
-    it("reads a corrupt single row as absent rather than throwing", () => {
+    it("fails loud on a corrupt single row so callers can detect and repair it", () => {
       upsertDoc("cone:1", { ok: true });
       corruptRow("cone:1");
 
-      expect(getDoc("cone:1")).toBeUndefined();
+      // A point read must throw (not read as absent): tooling like data-manager
+      // relies on the decode error to surface the row as malformed and offer
+      // exact-key deletion. Collection reads skip; getDoc does not.
+      expect(() => getDoc("cone:1")).toThrow();
     });
   });
 });

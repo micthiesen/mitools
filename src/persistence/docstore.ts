@@ -145,9 +145,11 @@ function encodeDoc(data: unknown): Buffer {
 }
 
 /**
- * Retrieves the document for a given primary key. Expired rows read as absent;
- * an unreadable (corrupt) row is warned about and also read as absent rather
- * than throwing.
+ * Retrieves the document for a given primary key. Expired rows read as absent.
+ * A point read fails loud on an unreadable (corrupt) row — the caller asked for
+ * this exact key, and surfacing the decode error lets a repair tool detect and
+ * delete the bad row. Collection reads (getDocsByEntity/getDocsByPrefix) skip
+ * corrupt rows instead so one bad blob can't sink the whole batch.
  */
 export function getDoc<T = unknown>(pk: string): T | undefined {
   const db = initialize();
@@ -155,8 +157,7 @@ export function getDoc<T = unknown>(pk: string): T | undefined {
     .prepare(`SELECT data FROM blobs WHERE pk = @pk AND ${NOT_EXPIRED}`)
     .get({ pk, now: Date.now() }) as { data: Buffer } | undefined;
   if (row) {
-    const data = decodeRow(pk, row.data);
-    if (data === CORRUPT_ROW) return undefined;
+    const data = Decoder.decodeFirstSync(row.data);
     logger.debug(`Found "${pk}" in docstore`, data);
     return data as T;
   }
