@@ -144,6 +144,13 @@ function encodeDoc(data: unknown): Buffer {
   return Buffer.concat(chunks);
 }
 
+// Encoding is correct at any size now, but a very large payload is still a smell:
+// collection reads (getAll/byPrefix) decode every row in full, so one fat blob
+// taxes every list read of its entity. Warn (don't block) so it's noticed before
+// it's a performance problem; the fix is usually trimming the row or moving heavy
+// fields out, not raising this number.
+const LARGE_DOC_WARN_BYTES = 256 * 1024;
+
 /**
  * Retrieves the document for a given primary key. Expired rows read as absent.
  * A point read fails loud on an unreadable (corrupt) row — the caller asked for
@@ -201,6 +208,14 @@ export function getDocsByEntity<T = unknown>(entity: string): T[] {
  */
 export function upsertDoc<T = unknown>(pk: string, data: T, meta: DocMeta = {}): void {
   const db = initialize();
+  const encoded = encodeDoc(data);
+  if (encoded.length > LARGE_DOC_WARN_BYTES) {
+    logger.warn(
+      `Large docstore payload for "${pk}": ${encoded.length} bytes ` +
+        `(> ${LARGE_DOC_WARN_BYTES}). Every collection read of this entity decodes ` +
+        `it in full; consider trimming the row or moving heavy fields elsewhere.`,
+    );
+  }
   db.prepare(`
     INSERT INTO blobs (pk, entity, version, expires_at, updated_at, data)
     VALUES (@pk, @entity, @version, @expires_at, @updated_at, @data)
@@ -216,7 +231,7 @@ export function upsertDoc<T = unknown>(pk: string, data: T, meta: DocMeta = {}):
     version: meta.version ?? 0,
     expires_at: meta.expiresAt ?? null,
     updated_at: meta.updatedAt ?? Date.now(),
-    data: encodeDoc(data),
+    data: encoded,
   });
   logger.debug(`Upserted "${pk}" in docstore`, data);
 }

@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { beforeAll, describe, expect, it } from "vitest";
 import { Injector } from "../config/Injector.js";
+import { Logger } from "../logging/Logger.js";
 import { LogLevel } from "../logging/types.js";
 import {
   cleanupExpired,
@@ -148,6 +149,24 @@ describe("docstore", () => {
       upsertDoc(`big:${size}`, doc);
       expect(getDoc(`big:${size}`)).toEqual(doc);
     }
+  });
+
+  it("warns (once) when an encoded payload exceeds the large-doc threshold", () => {
+    const warned: string[] = [];
+    Logger.onWarn = (n) => {
+      warned.push(n.title);
+    };
+    try {
+      upsertDoc("small:doc", { content: "a".repeat(1000) });
+      upsertDoc("big:doc", { content: "a".repeat(400_000) });
+    } finally {
+      Logger.onWarn = null;
+    }
+    expect(warned.filter((m) => m.includes("small:doc"))).toHaveLength(0);
+    const big = warned.filter((m) => m.includes("big:doc"));
+    expect(big).toHaveLength(1);
+    expect(big[0]).toMatch(/Large docstore payload/);
+    expect(getDoc("big:doc")).toEqual({ content: "a".repeat(400_000) }); // still stored
   });
 
   describe("corrupt rows", () => {
