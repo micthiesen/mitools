@@ -2,13 +2,18 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { Injector } from "../config/Injector.js";
 import { LogLevel } from "../logging/types.js";
 import {
+  cleanupExpired,
   clearDocstore,
+  countByEntity,
   countByPrefix,
   deleteDoc,
+  deleteDocsByEntity,
   deleteDocsByPrefix,
   getDoc,
+  getDocsByEntity,
   getKeysByPrefix,
   hasDoc,
+  touchDoc,
   upsertDoc,
 } from "./docstore.js";
 
@@ -73,5 +78,50 @@ describe("docstore", () => {
     const keys = getKeysByPrefix("keys:");
     expect(keys).toEqual(expect.arrayContaining(["keys:x", "keys:y"]));
     expect(keys).toHaveLength(2);
+  });
+
+  it("scopes reads/deletes by the entity column", () => {
+    upsertDoc("e:1", { n: 1 }, { entity: "foo" });
+    upsertDoc("e:2", { n: 2 }, { entity: "foo" });
+    upsertDoc("e:3", { n: 3 }, { entity: "bar" });
+
+    expect(countByEntity("foo")).toBe(2);
+    expect(getDocsByEntity("foo")).toHaveLength(2);
+    expect(deleteDocsByEntity("foo")).toBe(2);
+    expect(countByEntity("foo")).toBe(0);
+    expect(countByEntity("bar")).toBe(1);
+  });
+
+  it("treats expired rows as absent across reads", () => {
+    upsertDoc("exp:live", "a", { expiresAt: Date.now() + 60_000 });
+    upsertDoc("exp:dead", "b", { expiresAt: Date.now() - 1 });
+
+    expect(getDoc("exp:dead")).toBeUndefined();
+    expect(hasDoc("exp:dead")).toBe(false);
+    expect(getDoc("exp:live")).toBe("a");
+    expect(countByPrefix("exp:")).toBe(1);
+    expect(getKeysByPrefix("exp:")).toEqual(["exp:live"]);
+  });
+
+  it("treats LIKE metacharacters in a prefix literally", () => {
+    upsertDoc("a_b:1", 1);
+    upsertDoc("aXb:1", 2); // would match `a_b:%` if `_` were a wildcard
+
+    expect(countByPrefix("a_b:")).toBe(1);
+    expect(getKeysByPrefix("a_b:")).toEqual(["a_b:1"]);
+    expect(deleteDocsByPrefix("a_b:")).toBe(1);
+    expect(getDoc("aXb:1")).toBe(2);
+  });
+
+  it("touches expiry and physically reclaims expired rows", () => {
+    upsertDoc("t:1", "x", { expiresAt: Date.now() - 1 });
+    expect(touchDoc("t:1", Date.now() + 60_000)).toBe(false); // already expired
+
+    upsertDoc("t:2", "y", { expiresAt: Date.now() + 60_000 });
+    expect(touchDoc("t:2", null)).toBe(true); // clear expiry
+
+    upsertDoc("t:3", "z", { expiresAt: Date.now() - 1 });
+    expect(cleanupExpired()).toBeGreaterThanOrEqual(1);
+    expect(getDoc("t:3")).toBeUndefined();
   });
 });
