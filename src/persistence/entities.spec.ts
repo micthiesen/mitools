@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { Injector } from "../config/Injector.js";
 import { LogLevel } from "../logging/types.js";
-import { clearDocstore, getKeysByPrefix, getRawRow, upsertDoc } from "./docstore.js";
+import {
+  clearDocstore,
+  getDb,
+  getKeysByPrefix,
+  getRawRow,
+  upsertDoc,
+} from "./docstore.js";
 import { Entity } from "./entities.js";
 
 interface Doc {
@@ -233,6 +239,32 @@ describe("entity migration", () => {
     upsertDoc("$versioned#again", { id: "again", title: "Again", score: 1 });
     expect(Entity.migrateAll()).toBeGreaterThanOrEqual(1);
     expect(V2Entity.get({ id: "again" })?.label).toBe("Again");
+  });
+
+  it("isolates an undecodable row instead of aborting the whole migration", () => {
+    interface Note {
+      id: string;
+      body: string;
+    }
+    const NoteEntity = new Entity<Note, ["id"]>("mignote", ["id"]);
+
+    // Two good legacy rows straddling a corrupt one. The corrupt payload would
+    // throw in Decoder.decodeFirstSync; migration must skip it, not crash.
+    upsertDoc("$mignote#a", { id: "a", body: "first" });
+    getDb()
+      .prepare(
+        "INSERT INTO blobs (pk, entity, version, expires_at, updated_at, data) VALUES (?, NULL, 0, NULL, 0, ?)",
+      )
+      .run("$mignote#bad", Buffer.from([0xff, 0xff, 0xff]));
+    upsertDoc("$mignote#c", { id: "c", body: "third" });
+
+    // Does not throw, and reports the two rows it could rewrite.
+    expect(() => NoteEntity.migrate()).not.toThrow();
+    expect(NoteEntity.get({ id: "a" })?.body).toBe("first");
+    expect(NoteEntity.get({ id: "c" })?.body).toBe("third");
+    // The corrupt row is left untouched under its original key, still visible
+    // (and thus repairable/deletable) rather than silently dropped.
+    expect(getKeysByPrefix("$mignote#")).toContain("$mignote#bad");
   });
 
   it("does not clobber a live row with a stale legacy duplicate", () => {

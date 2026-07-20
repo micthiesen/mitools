@@ -265,6 +265,7 @@ export class Entity<Data, PKProps extends readonly (keyof Data)[]> {
   public migrate(): number {
     const rows = getRawRowsByPrefix(`$${this.name}#`);
     let migrated = 0;
+    let skipped = 0;
     // Keys that already hold a row we intend to keep: every existing pk, plus
     // any target we write this pass. A row re-keying onto one of these is a
     // collision — we skip it (leaving its source row intact) rather than
@@ -272,35 +273,54 @@ export class Entity<Data, PKProps extends readonly (keyof Data)[]> {
     const claimed = new Set(rows.map((row) => row.pk));
     transaction(() => {
       for (const row of rows) {
-        let data = Decoder.decodeFirstSync(row.data) as unknown;
-        if (this.migrateFn && row.version < this.version) {
-          data = this.migrateFn(data, row.version);
-        }
-        const newPk = this.getPk(data as Pick<Data, PKProps[number]>);
+        // A single unreadable row (corrupt CBOR, or a payload the migrate fn or
+        // key builder rejects) must never abort the whole migration: that would
+        // roll back every sibling row and, since migrateAll() runs at startup,
+        // crash-loop the process. Isolate the failure — warn, leave the row
+        // untouched (so it stays visible and repairable), and carry on.
+        try {
+          let data = Decoder.decodeFirstSync(row.data) as unknown;
+          if (this.migrateFn && row.version < this.version) {
+            data = this.migrateFn(data, row.version);
+          }
+          const newPk = this.getPk(data as Pick<Data, PKProps[number]>);
 
-        const unchanged =
-          newPk === row.pk && row.entity === this.name && row.version === this.version;
-        if (unchanged) continue;
+          const unchanged =
+            newPk === row.pk &&
+            row.entity === this.name &&
+            row.version === this.version;
+          if (unchanged) continue;
 
-        if (newPk !== row.pk && claimed.has(newPk)) {
+          if (newPk !== row.pk && claimed.has(newPk)) {
+            this.logger.warn(
+              `Skipping migration of "${row.pk}": target key "${newPk}" is already occupied`,
+            );
+            skipped++;
+            continue;
+          }
+          claimed.add(newPk);
+
+          upsertDoc(newPk, data, {
+            entity: this.name,
+            version: this.version,
+            expiresAt: row.expires_at,
+            updatedAt: row.updated_at || Date.now(),
+          });
+          if (newPk !== row.pk) deleteDoc(row.pk);
+          migrated++;
+        } catch (err) {
+          skipped++;
           this.logger.warn(
-            `Skipping migration of "${row.pk}": target key "${newPk}" is already occupied`,
+            `Skipping migration of "${row.pk}": ${
+              err instanceof Error ? err.message : String(err)
+            }`,
           );
-          continue;
         }
-        claimed.add(newPk);
-
-        upsertDoc(newPk, data, {
-          entity: this.name,
-          version: this.version,
-          expiresAt: row.expires_at,
-          updatedAt: row.updated_at || Date.now(),
-        });
-        if (newPk !== row.pk) deleteDoc(row.pk);
-        migrated++;
       }
     });
-    this.logger.debug(`Migrated ${migrated} "${this.name}" entities`);
+    this.logger.debug(
+      `Migrated ${migrated} "${this.name}" entities${skipped ? ` (skipped ${skipped})` : ""}`,
+    );
     return migrated;
   }
 
