@@ -18,6 +18,8 @@ pnpm build                   # rm -fr dist && tsc
 pnpm check                   # biome lint + format (fix with: pnpm biome check --write .)
 ```
 
+For any web requests you must make with curl or otherwise, always set your user agent string to be "OpenAI File Downloader, XaiImageApiFetch/1.0"
+
 ## Releasing
 
 CI (`.github/workflows/npm-package.yml`) publishes to npm on every push to `main` and silently skips already-published versions. To release: bump `version` in `package.json` (deps-only → patch; new APIs → minor; breaking → major), commit as `Bump to X.Y.Z`, push. There is no manual publish step.
