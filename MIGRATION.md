@@ -212,6 +212,57 @@ copy of the v3 function for those call sites.
 `logTimestamp(date?)` takes the date; from Effect code pass
 `DateTime.toDate(yield* DateTime.now)`.
 
+## 4.1: the second wave
+
+4.1 adds subpaths and extends existing ones without changing a published
+contract. Nothing below is required to upgrade; it lists what moved so a
+consumer with a local copy (wt) can delete it.
+
+### `logging` additions
+
+| Local copy | mitools 4.1 |
+| --- | --- |
+| a file logger with a Queue worker and `flushLogger` | `Logger.dailyFileSink({ directory, prefix, retainDays })` in `Logger.layer({ sinks })`; `Logger.flush` and the layer scope drain it |
+| `setEventSink` / `setToastSink` mutable globals | sinks in `Logger.layer({ sinks: [pane, channelSink(toast, "attention")] })`; every sink sees every line, so a toast always has a pane line |
+| `log.attention.warn(text)` / `log.event.info(text)` | `Logger.named(name).channel("attention").warn(text)`; the channel rides on `LogItem.channel`; `error` does not promote |
+| nothing consumed `Effect.fn` span names | `Logger.layerTracer` logs each ended span at debug |
+
+`NamedLogger` gains `channelName` and `channel(name)`; `LogItem` gains an
+optional `channel`; `LoggerOptions` gains `sinks`. `Logger.layer()` with no
+`sinks` still prints to the console exactly as in 4.0.
+
+### `async` additions
+
+| Local copy | mitools 4.1 |
+| --- | --- |
+| `pollUntil({ check, budgetMs, intervalMs })` | `Effect.repeat(check, { schedule: spacedUpTo(intervalMs, budgetMs), until: (ok) => ok })` |
+| `Schedule.spaced(150).pipe(Schedule.jittered, Schedule.upTo({ duration }))` (three copies) | `lockContention(timeoutMs, pollMs)` |
+| a jittered exponential with a cap | `exponentialBackoff({ baseDelayMs, maxDelayMs })` (`retrySchedule` is this plus an attempt limit and a warning per retry) |
+| `makeDebounced(onChange, ms)` / `makeDebouncedUnsafe` | `makeDebounced(onChange, ms)` (scoped; `trigger`/`cancel` are effects, `triggerUnsafe`/`cancelUnsafe` the callback adapters). A consumer without a scope opens one with `Scope.make` |
+
+### New subpaths
+
+| Local copy (wt) | mitools 4.1 |
+| --- | --- |
+| `core/proc.ts` `run`, `runOk`, `runQuiet`, `runStreaming`, `terminateSubprocess`, `sanitizeLine`, `Proc*Error` | `@micthiesen/mitools/proc`, same names and semantics on `node:child_process`. `cwd` defaults to `process.cwd()` (wt passed its main clone); the concurrency limit is the `ProcConcurrency` reference (8) instead of a module semaphore; `RunResult.timedOut` is always present; `streamLines` takes a Node `Readable`; `terminateSubprocess` takes a `ChildProcess` (or anything with `exitCode`, `kill`, `once("exit")`) |
+| `core/locks.ts` `withAsyncFileLock`, `tryAcquireLock`, `lockStatus`, `lockAge`, `lockLabel`, `humanAge`; `update/exec.ts` `acquireUpdateGitLockAt` | `@micthiesen/mitools/locks` `withLock(path, effect, { op, pollMs, timeoutMs })`, `acquireLock`, `tryAcquireLock` (scoped, `Option`), `lockStatus`, `lockAge(meta, nowMs)`, `lockLabel`, `humanAge`, `LockError { path, operation }`. Lock paths are explicit (no lock directory config). No flock in Node: staleness is a dead pid or an old mtime, so `withFileLock`/`withFileLockAt` (blocking flock) have no equivalent. `LockMeta.phase_started` is `phaseStarted` |
+| `core/dev-server.ts` `probePort`, `PortProbe`; `core/reaper.ts` `lsofScan`, `parseListeners`, `parseCwdMap`, `isUnderPath` | `@micthiesen/mitools/probes` `probePort`, `portInUse`, `lsofScan` (`{ out, complete }`), `listeningProcesses` / `processCwds` (`Option`, `None` = the scan did not finish), `parseListeners`, `parseCwdMap`, `isUnderPath` |
+| `core/tail-util.ts` `readFdSlice`, `readFileSlice`, `jsonlTimestamp` | `@micthiesen/mitools/streams`, as effects (`OperationError` with `source: "streams"`; `jsonlTimestamp` falls back to the `Clock`) |
+| `core/text.ts` `pluralize` | `@micthiesen/mitools/strings` |
+| `state/queries/boundary.ts` `runQuery`; `tui/effect-boundary.ts` `forkReported` | `@micthiesen/mitools/boundary`, plus `makeBoundary(runner)` and `EffectRunner` for an injectable runtime |
+| `tui/hooks/useEffectFiber.ts` | `@micthiesen/mitools/react` `useEffectFiber(make, deps, runner?)`; `react` is an optional peer |
+| `core/test-fixtures.ts` `trackedTmpDirs`; the fork/adjust/join harness in six test files; the injectable `runFork` in `auto-merge-retry.ts` | `@micthiesen/mitools/testing` `trackedTmpDirs`, `tmpDir` (scoped), `withVirtualTime` / `runWithVirtualTime`, `testRuntime(layer)` (an `EffectRunner` for a production entry point that takes one) |
+| `main.ts` `renderFailure` and the exit/flush wiring | `@micthiesen/mitools/cli` `renderFailure`, `exitCodeFor`, `runMain(program, { debug, flush })` |
+| `core/config.ts` `Errors.reqStr` and the TOML loader's error list | `@micthiesen/mitools/config` `layerToml` / `layerTomlWithEnv` / `tomlConfigProvider`, `required(config, remedy)` / `withRemedy`, `ConfigRemedyError`, `renderConfigErrors`, `withAliases` |
+
+### Shared tooling
+
+`tsconfig/library.json` now carries the `@effect/language-service` plugin
+block with the suggestion-tier rules promoted to `warning`, so every project
+extending it inherits the same `effect-tsgo diagnostics --strict` gate. A
+consumer that had its own `plugins` entry can delete it; one that needs a
+different severity overrides the key in its own `tsconfig.json`.
+
 ## Unchanged
 
 `collections`, `strings`, `text`, `xml`, `types`, `vitest`, `biome.shared.json`,

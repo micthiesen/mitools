@@ -31,6 +31,35 @@ Each item names the wt source to read (absolute paths into
 `/Users/michael/.wt`), what is generic, what is coupled to wt, and the
 decision.
 
+## 0. What landed (mitools 4.1.0, 2026-09-02)
+
+Every item below is one of: **done** (in mitools, with the subpath),
+**replaced** by an Effect built-in, or **declined** with the reason. Section
+numbers refer to the plan that follows.
+
+| Item | Outcome |
+| --- | --- |
+| 1.1 `errors` | done: `@micthiesen/mitools/errors` already had wt's shape (`OperationError`, `operationErrors`, `causeMessage`); wt deletes its copy |
+| 3 Schedule presets | done: `async` `exponentialBackoff`, `spacedUpTo`, `lockContention`; `retrySchedule` builds on `exponentialBackoff`; `locks` and `probes` use them |
+| 1.2 `proc` | done: `@micthiesen/mitools/proc` on `node:child_process`. Effect's `effect/unstable/process` was evaluated and not used as the core: it needs `@effect/platform-node` (a second platform peer), has no process-group kill and no `timedOut` discriminator. wt's interruption, abort, timeout and `killAfterMs` tests are ported as real-subprocess specs. Differences: `cwd` defaults to `process.cwd()`, the limit is the `ProcConcurrency` reference, a signal-killed child reports `128 + signum` |
+| 1.3 `locks` | done: `@micthiesen/mitools/locks` on the config-free design (`wx` create, pid/mtime staleness, `lockContention` retries, `acquireUseRelease`). Node has no flock, so `withFileLock`/`withFileLockAt` (blocking flock on a shared inode) are declined; a live but wedged holder is reclaimed after `staleMs` |
+| 1.4 debounce | done: `async` `makeDebounced` (scoped; `trigger`/`cancel` effects plus `triggerUnsafe`/`cancelUnsafe`). `makeDebouncedUnsafe` declined: open a `Scope` instead |
+| 1.5 probes | done: `@micthiesen/mitools/probes` `probePort`, `portInUse`, `lsofScan`, `listeningProcesses`, `processCwds`, parsers. `allocateDevPort` and `reapWorktreeListeners` stay in wt (policy) |
+| 1.6 helpers | done: `streams` `readFdSlice`, `readFileSlice`, `jsonlTimestamp`; `strings` `pluralize`. Declined: `prepareTailQuery` (bun:sqlite), `closeSilent` (trivial, FSWatcher-specific), `encodeRemoteArgs`/`decodeRemoteArgs` (no SSH helper in mitools yet) |
+| 1.7 boundaries | done: `@micthiesen/mitools/boundary` (`runQuery`, `forkReported`, `makeBoundary`, `EffectRunner`), `@micthiesen/mitools/react` (`useEffectFiber`, `fiberLifecycle`; `react` optional peer) |
+| 1.8 test helpers | done: `@micthiesen/mitools/testing` `withVirtualTime`, `runWithVirtualTime`, `tmpDir`, `trackedTmpDirs`, `testRuntime`. wt's `git()` fixture declined (Bun.spawnSync, wt-specific) |
+| 2 `pollUntil` | replaced: `Effect.repeat(check, { schedule: spacedUpTo(intervalMs, budgetMs), until })` |
+| 2 `createWorkerInfoFetcher`, `fetchOrigin` single-flight | replaced: `RcRef` / `RcMap` for refcounted shared fibers, `Effect.cached` / `Cache` for single-flight. Not ported |
+| 2 `state-db` / `wtstate` | reverse direction: wt adopts `sqlite`, `docstore`, `table` (unchanged in 4.1) |
+| 2 hand-rolled `deps` objects | replaced by `Context.Service` + `Layer`; every seam in mitools is one |
+| 3 logger sinks | done: `LogSink`, `Logger.consoleSink`, `Logger.dailyFileSink` (Queue-backed writer, retention), `channelSink`/`levelSink`/`filterSink`, `NamedLogger.channel`. Contract kept: every sink sees every line (a toast always has a pane line), the level never sets the channel |
+| 3 tracer layer | done: `Logger.layerTracer` |
+| 3 `config` on Effect | done: `tomlConfigProvider`, `layerToml`, `layerTomlWithEnv`, `required`/`withRemedy`/`ConfigRemedyError`, `renderConfigErrors`, `withAliases`. wt's loader can sit on it |
+| 3 CLI helpers | done: `@micthiesen/mitools/cli` `renderFailure`, `exitCodeFor`, `runMain` |
+| 3 language-service gate | done: the rules are in `tsconfig/library.json`; consumers inherit them. The plugin runs through `@effect/tsgo` here (TypeScript 7), wt keeps `@effect/language-service` on TypeScript 5 with the same rule names |
+| 4.5 wt follow-up | not done here (the goal says do not edit wt). The import list is in the release notes |
+| 5 things not to move | not moved |
+
 ## 1. Move from wt into mitools (generic, already Effect-shaped)
 
 ### 1.1 `errors`: `OperationError`, `operationErrors`, `causeMessage`
