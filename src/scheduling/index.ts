@@ -1,2 +1,2 @@
-export { ScheduledTask } from "./ScheduledTask.js";
-export { Scheduler } from "./Scheduler.js";
+export type { ScheduledTask } from "./ScheduledTask.js";
+export { InvalidScheduleError, Scheduler, type SchedulerShape } from "./Scheduler.js";

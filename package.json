@@ -7,8 +7,10 @@
   },
   "type": "module",
   "exports": {
+    "./errors": "./dist/errors/index.js",
     "./collections": "./dist/collections/index.js",
     "./config": "./dist/config/index.js",
+    "./sqlite": "./dist/persistence/sqlite.js",
     "./docstore": "./dist/persistence/docstore.js",
     "./entities": "./dist/persistence/entities.js",
     "./table": "./dist/persistence/table.js",
@@ -30,41 +32,57 @@
     "./tsconfig/*.json": "./tsconfig/*.json"
   },
   "scripts": {
-    "build": "rm -fr ./dist && tsc",
+    "build": "rm -fr ./dist && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "lint": "biome lint .",
+    "lint": "effect-tsgo diagnostics --project tsconfig.json --strict",
     "format": "biome format .",
     "check": "biome check .",
-    "test": "vitest"
+    "test": "vitest",
+    "prepare": "effect-tsgo patch --typescript --no-oxlint --skip-missing",
+    "prepack": "pnpm run build"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
-    "cbor": "^10.0.12",
-    "got": "^15.1.0",
-    "node-cron": "^4.6.0",
-    "p-queue": "^9.3.1",
-    "zod": "^4.4.3"
+    "cbor": "^10.0.12"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
+    "@effect/tsgo": "0.39.1",
+    "@effect/vitest": "4.0.0-rc.112",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.13.3",
+    "effect": "4.0.0-rc.112",
     "tsx": "^4.23.1",
-    "typescript": "^7.0.2",
+    "typescript": "7.0.2",
     "vite": "^8.1.4",
     "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=20",
-    "pnpm": ">=10"
+    "pnpm": ">=11"
   },
   "packageManager": "pnpm@11.13.0",
   "files": [
     "dist",
     "tsconfig",
-    "biome.shared.json"
+    "biome.shared.json",
+    "MIGRATION.md",
+    "CHANGELOG.md"
   ],
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
+  },
+  "peerDependencies": {
+    "effect": ">=4.0.0-rc.112 <4.1",
+    "vite": ">=8",
+    "vitest": ">=4.1.0 <5"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    },
+    "vitest": {
+      "optional": true
+    }
   }
 }

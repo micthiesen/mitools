@@ -1,12 +1,11 @@
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { Decoder, Encoder } from "cbor";
-import { Injector } from "../config/Injector.js";
-import { Logger } from "../logging/Logger.js";
+import { Clock, Context, Data, Effect, Layer, Option } from "effect";
+import { causeMessage, OperationError, operationErrors } from "../errors/index.js";
+import { Sqlite } from "./sqlite.js";
 
-const logger = new Logger("Docstore");
-
-// A map is used mostly for tests with different databases
-const dbMap = new Map<string, Database.Database>();
+const io = operationErrors("docstore");
+const annotate = Effect.annotateLogs({ logger: "Docstore" });
 
 /**
  * Per-row metadata stored alongside the CBOR payload. All fields are optional;
@@ -33,17 +32,111 @@ export interface RawRow {
   data: Buffer;
 }
 
-function initialize(): Database.Database {
-  const db_ = dbMap.get(Injector.config.DB_NAME);
-  if (db_) return db_;
+/**
+ * A point read hit a row whose CBOR payload cannot be decoded. The caller asked
+ * for this exact key, so the failure is surfaced (rather than read as absent)
+ * to let a repair tool detect and delete the bad row.
+ */
+export class CorruptRowError extends Data.TaggedError("CorruptRowError")<{
+  readonly pk: string;
+  readonly cause: unknown;
+}> {
+  override get message(): string {
+    return `unreadable docstore row "${this.pk}": ${causeMessage(this.cause)}`;
+  }
+}
 
-  const dbName = Injector.config.DB_NAME;
-  const path = Injector.config.DOCKERIZED ? `/data/${dbName}` : dbName;
-  const db = new Database(path);
+// An expired row does not exist for any read, whether or not physical cleanup
+// has run. This clause is appended to every read query.
+const NOT_EXPIRED = "(expires_at IS NULL OR expires_at > @now)";
 
-  db.pragma("journal_mode = WAL");
-  db.pragma("synchronous = NORMAL");
+// Builds a LIKE pattern that matches `prefix` literally: %/_ (and the escape
+// char itself) are neutralized, so a prefix containing them can't act as a
+// wildcard. Pair with `ESCAPE '\'` in the query.
+function likePrefix(prefix: string): string {
+  return `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
 
+// cbor's synchronous encoders (Encoder.encodeOne / cbor.encode) read their
+// output stream exactly once, so any payload larger than the stream's
+// highWaterMark (~64KB) comes back SILENTLY TRUNCATED. The encoder emits its
+// chunks synchronously, so collect every one (no size ceiling) instead of
+// relying on that single read. See cbor's own encodeAsync.
+export function encodeDoc(data: unknown): Buffer {
+  const chunks: Buffer[] = [];
+  const encoder = new Encoder();
+  encoder.on("data", (chunk: Buffer) => chunks.push(chunk));
+  encoder.pushAny(data);
+  encoder.end();
+  return Buffer.concat(chunks);
+}
+
+/** Decodes one stored payload; throws on corrupt CBOR. */
+export function decodeDoc<T = unknown>(data: Buffer): T {
+  return Decoder.decodeFirstSync(data) as T;
+}
+
+// Encoding is correct at any size, but a very large payload is still a smell:
+// collection reads decode every row in full, so one fat blob taxes every list
+// read of its entity. Warn (don't block) so it's noticed before it's a
+// performance problem.
+const LARGE_DOC_WARN_BYTES = 256 * 1024;
+
+/**
+ * Synchronous statements over the shared connection. Every function may throw
+ * (better-sqlite3 / cbor); the `Docstore` service wraps them once as
+ * `OperationError`. Exposed so `Entity` can compose several steps inside a
+ * single transaction.
+ */
+export interface DocstoreSync {
+  readonly getRawRow: (pk: string, now: number) => RawRow | undefined;
+  readonly upsertDoc: (pk: string, data: unknown, meta: DocMeta, now: number) => number;
+  readonly deleteDoc: (pk: string) => boolean;
+  readonly getRawRowsByPrefix: (prefix: string) => RawRow[];
+}
+
+function makeSync(db: Database.Database): DocstoreSync {
+  return {
+    getRawRow: (pk, now) =>
+      db
+        .prepare(
+          `SELECT pk, entity, version, expires_at, updated_at, data FROM blobs
+           WHERE pk = @pk AND ${NOT_EXPIRED}`,
+        )
+        .get({ pk, now }) as RawRow | undefined,
+    upsertDoc: (pk, data, meta, now) => {
+      const encoded = encodeDoc(data);
+      db.prepare(`
+        INSERT INTO blobs (pk, entity, version, expires_at, updated_at, data)
+        VALUES (@pk, @entity, @version, @expires_at, @updated_at, @data)
+        ON CONFLICT(pk) DO UPDATE SET
+          entity=excluded.entity,
+          version=excluded.version,
+          expires_at=excluded.expires_at,
+          updated_at=excluded.updated_at,
+          data=excluded.data
+      `).run({
+        pk,
+        entity: meta.entity ?? null,
+        version: meta.version ?? 0,
+        expires_at: meta.expiresAt ?? null,
+        updated_at: meta.updatedAt ?? now,
+        data: encoded,
+      });
+      return encoded.length;
+    },
+    deleteDoc: (pk) => db.prepare("DELETE FROM blobs WHERE pk = ?").run(pk).changes > 0,
+    getRawRowsByPrefix: (prefix) =>
+      db
+        .prepare(
+          `SELECT pk, entity, version, expires_at, updated_at, data FROM blobs
+           WHERE pk LIKE ? ESCAPE '\\'`,
+        )
+        .all(likePrefix(prefix)) as RawRow[],
+  };
+}
+
+function initializeSchema(db: Database.Database): void {
   // Fresh databases get the full schema; pre-existing ones get additive
   // ALTERs below (cheap, idempotent). Data left by older versions keeps
   // entity = NULL / version = 0 / no expiry until Entity.migrateAll() runs.
@@ -82,343 +175,378 @@ function initialize(): Database.Database {
   db.exec(
     "CREATE INDEX IF NOT EXISTS blobs_expiry_idx ON blobs(expires_at) WHERE expires_at IS NOT NULL",
   );
-
-  logger.debug("Initialized docstore");
-  dbMap.set(dbName, db);
-  return db;
 }
 
-// An expired row does not exist for any read, whether or not physical cleanup
-// has run. This clause is appended to every read query.
-const NOT_EXPIRED = "(expires_at IS NULL OR expires_at > @now)";
-
-// Builds a LIKE pattern that matches `prefix` literally: %/_ (and the escape
-// char itself) are neutralized, so a prefix containing them can't act as a
-// wildcard. Pair with `ESCAPE '\'` in the query.
-function likePrefix(prefix: string): string {
-  return `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-}
-
-// A single unreadable row (truncated/corrupt CBOR) must never abort a
-// whole-collection read: one bad blob would otherwise throw out of every
-// getAll()/getByPrefix() and take down every consumer of that collection.
-// Mirror migrate()'s isolation — warn, skip, and leave the row on disk so it
-// stays visible and repairable rather than being silently dropped forever.
-const CORRUPT_ROW = Symbol("corrupt-row");
-
-function decodeRow(pk: string, data: Buffer): unknown {
-  try {
-    return Decoder.decodeFirstSync(data);
-  } catch (err) {
-    logger.warn(
-      `Skipping unreadable docstore row "${pk}": ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-    return CORRUPT_ROW;
-  }
-}
-
-function decodeRows<T>(rows: { pk: string; data: Buffer }[]): T[] {
-  const out: T[] = [];
-  for (const row of rows) {
-    const data = decodeRow(row.pk, row.data);
-    if (data !== CORRUPT_ROW) out.push(data as T);
-  }
-  return out;
-}
-
-// cbor's synchronous encoders (Encoder.encodeOne / cbor.encode) read their
-// output stream exactly once, so any payload larger than the stream's
-// highWaterMark (~64KB) comes back SILENTLY TRUNCATED — the row then fails to
-// decode ("Insufficient data") on the next read and is corrupt on disk. The
-// encoder emits its chunks synchronously, so collect every one (no size
-// ceiling) instead of relying on that single read. See cbor's own encodeAsync,
-// which exists for exactly this reason.
-function encodeDoc(data: unknown): Buffer {
-  const chunks: Buffer[] = [];
-  const encoder = new Encoder();
-  encoder.on("data", (chunk: Buffer) => chunks.push(chunk));
-  encoder.pushAny(data);
-  encoder.end();
-  return Buffer.concat(chunks);
-}
-
-// Encoding is correct at any size now, but a very large payload is still a smell:
-// collection reads (getAll/byPrefix) decode every row in full, so one fat blob
-// taxes every list read of its entity. Warn (don't block) so it's noticed before
-// it's a performance problem; the fix is usually trimming the row or moving heavy
-// fields out, not raising this number.
-const LARGE_DOC_WARN_BYTES = 256 * 1024;
-
-/**
- * Retrieves the document for a given primary key. Expired rows read as absent.
- * A point read fails loud on an unreadable (corrupt) row — the caller asked for
- * this exact key, and surfacing the decode error lets a repair tool detect and
- * delete the bad row. Collection reads (getDocsByEntity/getDocsByPrefix) skip
- * corrupt rows instead so one bad blob can't sink the whole batch.
- */
-export function getDoc<T = unknown>(pk: string): T | undefined {
-  const db = initialize();
-  const row = db
-    .prepare(`SELECT data FROM blobs WHERE pk = @pk AND ${NOT_EXPIRED}`)
-    .get({ pk, now: Date.now() }) as { data: Buffer } | undefined;
-  if (row) {
-    const data = Decoder.decodeFirstSync(row.data);
-    logger.debug(`Found "${pk}" in docstore`, data);
-    return data as T;
-  }
-
-  logger.debug(`"${pk}" not found in docstore`);
+export interface DocstoreShape {
+  /**
+   * Retrieves the document for a primary key. Expired rows read as absent. A
+   * point read fails with `CorruptRowError` on an unreadable row; collection
+   * reads skip such rows instead so one bad blob can't sink the whole batch.
+   */
+  getDoc<T = unknown>(
+    pk: string,
+  ): Effect.Effect<Option.Option<T>, OperationError | CorruptRowError>;
+  /** Raw-key escape hatch; `Entity` uses `getDocsByEntity`. Unreadable rows are skipped (warned). */
+  getDocsByPrefix<T = unknown>(prefix: string): Effect.Effect<T[], OperationError>;
+  /** All live documents of an entity. Unreadable rows are skipped (warned). */
+  getDocsByEntity<T = unknown>(entity: string): Effect.Effect<T[], OperationError>;
+  /** Upserts a document. Metadata defaults: no entity, version 0, no expiry, updated_at = now. */
+  upsertDoc<T = unknown>(
+    pk: string,
+    data: T,
+    meta?: DocMeta,
+  ): Effect.Effect<void, OperationError>;
+  /** Updates the expiry (and updated_at) of a live row. Resolves true if a row was touched. */
+  touchDoc(
+    pk: string,
+    expiresAt: number | null,
+  ): Effect.Effect<boolean, OperationError>;
+  /** Resolves true if a document was deleted. */
+  deleteDoc(pk: string): Effect.Effect<boolean, OperationError>;
+  /** Resolves the number of documents deleted. */
+  deleteDocsByPrefix(prefix: string): Effect.Effect<number, OperationError>;
+  /** Resolves the number of documents deleted. */
+  deleteDocsByEntity(entity: string): Effect.Effect<number, OperationError>;
+  /** Existence check without deserializing. Expired rows read as absent. */
+  hasDoc(pk: string): Effect.Effect<boolean, OperationError>;
+  countByPrefix(prefix: string): Effect.Effect<number, OperationError>;
+  countByEntity(entity: string): Effect.Effect<number, OperationError>;
+  /** All live primary keys matching a prefix (raw storage keys). */
+  getKeysByPrefix(prefix: string): Effect.Effect<string[], OperationError>;
+  /**
+   * Physically deletes up to `limit` expired rows. Storage maintenance, not
+   * expiry correctness (reads already ignore expired rows).
+   */
+  cleanupExpired(limit?: number): Effect.Effect<number, OperationError>;
+  /** The raw row (payload + metadata) for a live pk. */
+  getRawRow(pk: string): Effect.Effect<Option.Option<RawRow>, OperationError>;
+  /** Raw rows (including expired ones) matching a prefix. Used by `Entity.migrate`. */
+  getRawRowsByPrefix(prefix: string): Effect.Effect<RawRow[], OperationError>;
+  /**
+   * Runs synchronous statements inside one write transaction. `fn` must not
+   * return an Effect: it would never run.
+   */
+  transaction<A>(
+    operation: string,
+    fn: (tx: DocstoreSync) => A,
+  ): Effect.Effect<A, OperationError>;
+  /** Deletes every row. */
+  readonly clear: Effect.Effect<void, OperationError>;
 }
 
 /**
- * Retrieves all documents matching a given primary key prefix.
- * Escape-hatch API for raw docstore keys; Entity uses getDocsByEntity.
- * Unreadable rows are skipped (warned) so one corrupt blob can't fail the read.
+ * CBOR-encoded documents in a single `blobs` table of the shared `Sqlite`
+ * connection, keyed by primary key with entity/version/expiry metadata columns.
  */
-export function getDocsByPrefix<T = unknown>(prefix: string): T[] {
-  const db = initialize();
-  const rows = db
-    .prepare(
-      `SELECT pk, data FROM blobs WHERE pk LIKE @like ESCAPE '\\' AND ${NOT_EXPIRED}`,
-    )
-    .all({ like: likePrefix(prefix), now: Date.now() }) as {
-    pk: string;
-    data: Buffer;
-  }[];
-  return decodeRows<T>(rows);
+export class Docstore extends Context.Service<Docstore, DocstoreShape>()(
+  "@micthiesen/mitools/Docstore",
+) {
+  /** Ensures the `blobs` schema on the shared connection and exposes the store. */
+  static readonly layer: Layer.Layer<Docstore, OperationError, Sqlite> = Layer.effect(
+    Docstore,
+    Effect.gen(function* () {
+      const { db, transaction } = yield* Sqlite;
+      yield* io.sync("initialize schema", () => initializeSchema(db));
+      yield* Effect.logDebug("Initialized docstore");
+      return Docstore.of(makeDocstore(db, transaction));
+    }).pipe(annotate),
+  );
+
+  /** Docstore over an in-memory database, for tests. Exposes `Sqlite` too. */
+  static readonly layerMemory: Layer.Layer<Docstore | Sqlite, OperationError> =
+    Docstore.layer.pipe(Layer.provideMerge(Sqlite.layerMemory));
 }
 
-/**
- * Retrieves all documents belonging to an entity. Expired rows are skipped, as
- * are unreadable (corrupt) rows so one bad blob can't fail the whole read.
- */
-export function getDocsByEntity<T = unknown>(entity: string): T[] {
-  const db = initialize();
-  const rows = db
-    .prepare(`SELECT pk, data FROM blobs WHERE entity = @entity AND ${NOT_EXPIRED}`)
-    .all({ entity, now: Date.now() }) as { pk: string; data: Buffer }[];
-  return decodeRows<T>(rows);
-}
+function makeDocstore(
+  db: Database.Database,
+  transaction: Sqlite["Service"]["transaction"],
+): DocstoreShape {
+  const sync = makeSync(db);
+  const now = Clock.currentTimeMillis;
 
-/**
- * Upserts a document in the docstore. Metadata defaults to no entity,
- * version 0, no expiry, and updated_at = now.
- */
-export function upsertDoc<T = unknown>(pk: string, data: T, meta: DocMeta = {}): void {
-  const db = initialize();
-  const encoded = encodeDoc(data);
-  if (encoded.length > LARGE_DOC_WARN_BYTES) {
-    logger.warn(
-      `Large docstore payload for "${pk}": ${encoded.length} bytes ` +
-        `(> ${LARGE_DOC_WARN_BYTES}). Every collection read of this entity decodes ` +
-        `it in full; consider trimming the row or moving heavy fields elsewhere.`,
-    );
-  }
-  db.prepare(`
-    INSERT INTO blobs (pk, entity, version, expires_at, updated_at, data)
-    VALUES (@pk, @entity, @version, @expires_at, @updated_at, @data)
-    ON CONFLICT(pk) DO UPDATE SET
-      entity=excluded.entity,
-      version=excluded.version,
-      expires_at=excluded.expires_at,
-      updated_at=excluded.updated_at,
-      data=excluded.data
-  `).run({
-    pk,
-    entity: meta.entity ?? null,
-    version: meta.version ?? 0,
-    expires_at: meta.expiresAt ?? null,
-    updated_at: meta.updatedAt ?? Date.now(),
-    data: encoded,
+  // A single unreadable row (truncated/corrupt CBOR) must never abort a
+  // whole-collection read: one bad blob would otherwise take down every
+  // consumer of that collection. Warn, skip, and leave the row on disk so it
+  // stays visible and repairable rather than being silently dropped forever.
+  const decodeRows = Effect.fnUntraced(function* <T>(
+    rows: { pk: string; data: Buffer }[],
+  ) {
+    const out: T[] = [];
+    for (const row of rows) {
+      const decoded = yield* Effect.try({
+        try: () => decodeDoc<T>(row.data),
+        catch: (cause) => new CorruptRowError({ pk: row.pk, cause }),
+      }).pipe(
+        Effect.tapError((error) => Effect.logWarning(`Skipping ${error.message}`)),
+        Effect.option,
+      );
+      if (Option.isSome(decoded)) out.push(decoded.value);
+    }
+    return out;
   });
-  logger.debug(`Upserted "${pk}" in docstore`, data);
+
+  const getDoc = Effect.fn("Docstore.getDoc")(function* <T>(pk: string) {
+    const t = yield* now;
+    const row = yield* io.sync(
+      `getDoc ${pk}`,
+      () =>
+        db.prepare(`SELECT data FROM blobs WHERE pk = @pk AND ${NOT_EXPIRED}`).get({
+          pk,
+          now: t,
+        }) as { data: Buffer } | undefined,
+    );
+    if (!row) return Option.none<T>();
+    const data = yield* Effect.try({
+      try: () => decodeDoc<T>(row.data),
+      catch: (cause) => new CorruptRowError({ pk, cause }),
+    });
+    return Option.some(data);
+  }, annotate);
+
+  const getDocsByPrefix = Effect.fn("Docstore.getDocsByPrefix")(function* <T>(
+    prefix: string,
+  ) {
+    const t = yield* now;
+    const rows = yield* io.sync(
+      `getDocsByPrefix ${prefix}`,
+      () =>
+        db
+          .prepare(
+            `SELECT pk, data FROM blobs WHERE pk LIKE @like ESCAPE '\\' AND ${NOT_EXPIRED}`,
+          )
+          .all({ like: likePrefix(prefix), now: t }) as { pk: string; data: Buffer }[],
+    );
+    return yield* decodeRows<T>(rows);
+  }, annotate);
+
+  const getDocsByEntity = Effect.fn("Docstore.getDocsByEntity")(function* <T>(
+    entity: string,
+  ) {
+    const t = yield* now;
+    const rows = yield* io.sync(
+      `getDocsByEntity ${entity}`,
+      () =>
+        db
+          .prepare(
+            `SELECT pk, data FROM blobs WHERE entity = @entity AND ${NOT_EXPIRED}`,
+          )
+          .all({ entity, now: t }) as { pk: string; data: Buffer }[],
+    );
+    return yield* decodeRows<T>(rows);
+  }, annotate);
+
+  const upsertDoc = Effect.fn("Docstore.upsertDoc")(function* <T>(
+    pk: string,
+    data: T,
+    meta: DocMeta = {},
+  ) {
+    const t = yield* now;
+    const bytes = yield* io.sync(`upsertDoc ${pk}`, () =>
+      sync.upsertDoc(pk, data, meta, t),
+    );
+    if (bytes > LARGE_DOC_WARN_BYTES) {
+      yield* Effect.logWarning(
+        `Large docstore payload for "${pk}": ${bytes} bytes ` +
+          `(> ${LARGE_DOC_WARN_BYTES}). Every collection read of this entity decodes ` +
+          `it in full; consider trimming the row or moving heavy fields elsewhere.`,
+      );
+    }
+    yield* Effect.logDebug(`Upserted "${pk}" in docstore`);
+  }, annotate);
+
+  const touchDoc = Effect.fn("Docstore.touchDoc")(function* (
+    pk: string,
+    expiresAt: number | null,
+  ) {
+    const t = yield* now;
+    const changes = yield* io.sync(
+      `touchDoc ${pk}`,
+      () =>
+        db
+          .prepare(
+            `UPDATE blobs SET expires_at = @expiresAt, updated_at = @now
+             WHERE pk = @pk AND ${NOT_EXPIRED}`,
+          )
+          .run({ pk, expiresAt, now: t }).changes,
+    );
+    return changes > 0;
+  }, annotate);
+
+  const deleteDoc = Effect.fn("Docstore.deleteDoc")(function* (pk: string) {
+    const deleted = yield* io.sync(`deleteDoc ${pk}`, () => sync.deleteDoc(pk));
+    yield* Effect.logDebug(
+      `${deleted ? "Deleted" : "No doc found for"} "${pk}" in docstore`,
+    );
+    return deleted;
+  }, annotate);
+
+  const deleteDocsByPrefix = Effect.fn("Docstore.deleteDocsByPrefix")(function* (
+    prefix: string,
+  ) {
+    const changes = yield* io.sync(
+      `deleteDocsByPrefix ${prefix}`,
+      () =>
+        db
+          .prepare("DELETE FROM blobs WHERE pk LIKE ? ESCAPE '\\'")
+          .run(likePrefix(prefix)).changes,
+    );
+    yield* Effect.logDebug(`Deleted ${changes} docs with prefix "${prefix}"`);
+    return changes;
+  }, annotate);
+
+  const deleteDocsByEntity = Effect.fn("Docstore.deleteDocsByEntity")(function* (
+    entity: string,
+  ) {
+    const changes = yield* io.sync(
+      `deleteDocsByEntity ${entity}`,
+      () => db.prepare("DELETE FROM blobs WHERE entity = ?").run(entity).changes,
+    );
+    yield* Effect.logDebug(`Deleted ${changes} docs for entity "${entity}"`);
+    return changes;
+  }, annotate);
+
+  const hasDoc = Effect.fn("Docstore.hasDoc")(function* (pk: string) {
+    const t = yield* now;
+    const row = yield* io.sync(`hasDoc ${pk}`, () =>
+      db
+        .prepare(`SELECT 1 FROM blobs WHERE pk = @pk AND ${NOT_EXPIRED}`)
+        .get({ pk, now: t }),
+    );
+    return row !== undefined;
+  }, annotate);
+
+  const countByPrefix = Effect.fn("Docstore.countByPrefix")(function* (prefix: string) {
+    const t = yield* now;
+    const row = yield* io.sync(
+      `countByPrefix ${prefix}`,
+      () =>
+        db
+          .prepare(
+            `SELECT COUNT(*) as count FROM blobs WHERE pk LIKE @like ESCAPE '\\' AND ${NOT_EXPIRED}`,
+          )
+          .get({ like: likePrefix(prefix), now: t }) as { count: number },
+    );
+    return row.count;
+  }, annotate);
+
+  const countByEntity = Effect.fn("Docstore.countByEntity")(function* (entity: string) {
+    const t = yield* now;
+    const row = yield* io.sync(
+      `countByEntity ${entity}`,
+      () =>
+        db
+          .prepare(
+            `SELECT COUNT(*) as count FROM blobs WHERE entity = @entity AND ${NOT_EXPIRED}`,
+          )
+          .get({ entity, now: t }) as { count: number },
+    );
+    return row.count;
+  }, annotate);
+
+  const getKeysByPrefix = Effect.fn("Docstore.getKeysByPrefix")(function* (
+    prefix: string,
+  ) {
+    const t = yield* now;
+    const rows = yield* io.sync(
+      `getKeysByPrefix ${prefix}`,
+      () =>
+        db
+          .prepare(
+            `SELECT pk FROM blobs WHERE pk LIKE @like ESCAPE '\\' AND ${NOT_EXPIRED}`,
+          )
+          .all({ like: likePrefix(prefix), now: t }) as { pk: string }[],
+    );
+    return rows.map((row) => row.pk);
+  }, annotate);
+
+  const cleanupExpired = Effect.fn("Docstore.cleanupExpired")(function* (limit = 1000) {
+    const t = yield* now;
+    const changes = yield* io.sync(
+      "cleanupExpired",
+      () =>
+        db
+          .prepare(
+            `DELETE FROM blobs WHERE pk IN (
+               SELECT pk FROM blobs
+               WHERE expires_at IS NOT NULL AND expires_at <= @now
+               LIMIT @limit
+             )`,
+          )
+          .run({ now: t, limit }).changes,
+    );
+    if (changes > 0) yield* Effect.logDebug(`Cleaned up ${changes} expired docs`);
+    return changes;
+  }, annotate);
+
+  const getRawRow = Effect.fn("Docstore.getRawRow")(function* (pk: string) {
+    const t = yield* now;
+    const row = yield* io.sync(`getRawRow ${pk}`, () => sync.getRawRow(pk, t));
+    return Option.fromNullishOr(row);
+  }, annotate);
+
+  const getRawRowsByPrefix = Effect.fn("Docstore.getRawRowsByPrefix")(
+    (prefix: string) =>
+      io.sync(`getRawRowsByPrefix ${prefix}`, () => sync.getRawRowsByPrefix(prefix)),
+    annotate,
+  );
+
+  const clear = io.sync("clear", () => {
+    db.prepare("DELETE FROM blobs").run();
+  });
+
+  return {
+    getDoc,
+    getDocsByPrefix,
+    getDocsByEntity,
+    upsertDoc,
+    touchDoc,
+    deleteDoc,
+    deleteDocsByPrefix,
+    deleteDocsByEntity,
+    hasDoc,
+    countByPrefix,
+    countByEntity,
+    getKeysByPrefix,
+    cleanupExpired,
+    getRawRow,
+    getRawRowsByPrefix,
+    transaction: (operation, fn) =>
+      transaction(operation, () => fn(sync)).pipe(
+        Effect.mapError(
+          (error) => new OperationError({ ...error, source: "docstore" }),
+        ),
+      ),
+    clear,
+  };
 }
 
-/**
- * Updates the expiry (and updated_at) of an existing, non-expired row.
- * Returns true if a row was touched.
- */
-export function touchDoc(pk: string, expiresAt: number | null): boolean {
-  const db = initialize();
-  const now = Date.now();
-  const result = db
-    .prepare(
-      `UPDATE blobs SET expires_at = @expiresAt, updated_at = @now
-       WHERE pk = @pk AND ${NOT_EXPIRED}`,
-    )
-    .run({ pk, expiresAt, now });
-  return result.changes > 0;
-}
+// Accessors: the same operations as effects that require the `Docstore`
+// service, for callers that would rather not yield the service first.
 
-/**
- * Deletes a single document by primary key.
- * Returns true if a document was deleted, false if it didn't exist.
- */
-export function deleteDoc(pk: string): boolean {
-  const db = initialize();
-  const result = db.prepare("DELETE FROM blobs WHERE pk = ?").run(pk);
-  const deleted = result.changes > 0;
-  logger.debug(`${deleted ? "Deleted" : "No doc found for"} "${pk}" in docstore`);
-  return deleted;
-}
-
-/**
- * Deletes all documents matching a given primary key prefix.
- * Returns the number of documents deleted.
- */
-export function deleteDocsByPrefix(prefix: string): number {
-  const db = initialize();
-  const result = db
-    .prepare("DELETE FROM blobs WHERE pk LIKE ? ESCAPE '\\'")
-    .run(likePrefix(prefix));
-  logger.debug(`Deleted ${result.changes} docs with prefix "${prefix}"`);
-  return result.changes;
-}
-
-/**
- * Deletes all documents belonging to an entity.
- * Returns the number of documents deleted.
- */
-export function deleteDocsByEntity(entity: string): number {
-  const db = initialize();
-  const result = db.prepare("DELETE FROM blobs WHERE entity = ?").run(entity);
-  logger.debug(`Deleted ${result.changes} docs for entity "${entity}"`);
-  return result.changes;
-}
-
-/**
- * Checks whether a document exists for a given primary key without
- * deserializing. Expired rows read as absent.
- */
-export function hasDoc(pk: string): boolean {
-  const db = initialize();
-  const row = db
-    .prepare(`SELECT 1 FROM blobs WHERE pk = @pk AND ${NOT_EXPIRED}`)
-    .get({ pk, now: Date.now() });
-  return row !== undefined;
-}
-
-/**
- * Counts non-expired documents matching a given primary key prefix.
- */
-export function countByPrefix(prefix: string): number {
-  const db = initialize();
-  const row = db
-    .prepare(
-      `SELECT COUNT(*) as count FROM blobs WHERE pk LIKE @like ESCAPE '\\' AND ${NOT_EXPIRED}`,
-    )
-    .get({ like: likePrefix(prefix), now: Date.now() }) as { count: number };
-  return row.count;
-}
-
-/**
- * Counts non-expired documents belonging to an entity.
- */
-export function countByEntity(entity: string): number {
-  const db = initialize();
-  const row = db
-    .prepare(
-      `SELECT COUNT(*) as count FROM blobs WHERE entity = @entity AND ${NOT_EXPIRED}`,
-    )
-    .get({ entity, now: Date.now() }) as { count: number };
-  return row.count;
-}
-
-/**
- * Returns all primary keys matching a given prefix (non-expired).
- * Escape-hatch API exposing raw storage keys.
- */
-export function getKeysByPrefix(prefix: string): string[] {
-  const db = initialize();
-  const rows = db
-    .prepare(`SELECT pk FROM blobs WHERE pk LIKE @like ESCAPE '\\' AND ${NOT_EXPIRED}`)
-    .all({ like: likePrefix(prefix), now: Date.now() }) as { pk: string }[];
-  return rows.map((row) => row.pk);
-}
-
-/**
- * Physically deletes up to `limit` expired rows. This is storage maintenance,
- * not expiry correctness (reads already ignore expired rows). Returns the
- * number of rows removed.
- */
-export function cleanupExpired(limit = 1000): number {
-  const db = initialize();
-  const result = db
-    .prepare(
-      `DELETE FROM blobs WHERE pk IN (
-         SELECT pk FROM blobs
-         WHERE expires_at IS NOT NULL AND expires_at <= @now
-         LIMIT @limit
-       )`,
-    )
-    .run({ now: Date.now(), limit });
-  if (result.changes > 0) logger.debug(`Cleaned up ${result.changes} expired docs`);
-  return result.changes;
-}
-
-/**
- * Returns the raw row (payload + metadata) for a live pk, or undefined if it's
- * missing or expired. Lets callers preserve existing metadata on rewrite.
- */
-export function getRawRow(pk: string): RawRow | undefined {
-  const db = initialize();
-  return db
-    .prepare(
-      `SELECT pk, entity, version, expires_at, updated_at, data FROM blobs
-       WHERE pk = @pk AND ${NOT_EXPIRED}`,
-    )
-    .get({ pk, now: Date.now() }) as RawRow | undefined;
-}
-
-/**
- * Returns raw rows (including expired ones and metadata) matching a prefix.
- * Used by Entity.migrate; not expiry-filtered so migration preserves expiry.
- */
-export function getRawRowsByPrefix(prefix: string): RawRow[] {
-  const db = initialize();
-  return db
-    .prepare(
-      `SELECT pk, entity, version, expires_at, updated_at, data FROM blobs
-       WHERE pk LIKE ? ESCAPE '\\'`,
-    )
-    .all(likePrefix(prefix)) as RawRow[];
-}
-
-/**
- * Runs `fn` inside a single write transaction. Nested reads/writes via the
- * docstore helpers share the same connection and participate in the tx.
- */
-export function transaction<T>(fn: () => T): T {
-  const db = initialize();
-  return db.transaction(fn)();
-}
-
-/**
- * Escape hatch: returns the raw better-sqlite3 Database instance.
- */
-export function getDb(): Database.Database {
-  return initialize();
-}
-
-/**
- * Closes the database connection and removes it from the pool.
- */
-export function closeDb(): void {
-  const dbName = Injector.config.DB_NAME;
-  const db = dbMap.get(dbName);
-  if (db) {
-    db.close();
-    dbMap.delete(dbName);
-    logger.debug("Closed docstore");
-  }
-}
-
-/**
- * Clears the docstore
- */
-export function clearDocstore(): void {
-  const db = initialize();
-  db.prepare("DELETE FROM blobs").run();
-}
+export const getDoc = <T = unknown>(pk: string) => Docstore.use((s) => s.getDoc<T>(pk));
+export const getDocsByPrefix = <T = unknown>(prefix: string) =>
+  Docstore.use((s) => s.getDocsByPrefix<T>(prefix));
+export const getDocsByEntity = <T = unknown>(entity: string) =>
+  Docstore.use((s) => s.getDocsByEntity<T>(entity));
+export const upsertDoc = <T = unknown>(pk: string, data: T, meta?: DocMeta) =>
+  Docstore.use((s) => s.upsertDoc(pk, data, meta));
+export const touchDoc = (pk: string, expiresAt: number | null) =>
+  Docstore.use((s) => s.touchDoc(pk, expiresAt));
+export const deleteDoc = (pk: string) => Docstore.use((s) => s.deleteDoc(pk));
+export const deleteDocsByPrefix = (prefix: string) =>
+  Docstore.use((s) => s.deleteDocsByPrefix(prefix));
+export const deleteDocsByEntity = (entity: string) =>
+  Docstore.use((s) => s.deleteDocsByEntity(entity));
+export const hasDoc = (pk: string) => Docstore.use((s) => s.hasDoc(pk));
+export const countByPrefix = (prefix: string) =>
+  Docstore.use((s) => s.countByPrefix(prefix));
+export const countByEntity = (entity: string) =>
+  Docstore.use((s) => s.countByEntity(entity));
+export const getKeysByPrefix = (prefix: string) =>
+  Docstore.use((s) => s.getKeysByPrefix(prefix));
+export const cleanupExpired = (limit?: number) =>
+  Docstore.use((s) => s.cleanupExpired(limit));
+export const getRawRow = (pk: string) => Docstore.use((s) => s.getRawRow(pk));
+export const getRawRowsByPrefix = (prefix: string) =>
+  Docstore.use((s) => s.getRawRowsByPrefix(prefix));
+export const clearDocstore = Docstore.use((s) => s.clear);

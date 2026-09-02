@@ -1,8 +1,6 @@
-import got, { type Got } from "got";
-import { z } from "zod";
-import { tryCatch } from "../async/index.js";
-import { extractHttpError } from "../http/index.js";
-import type { Logger } from "../logging/Logger.js";
+import { Config, Context, Data, Effect, Layer, Redacted, Schema } from "effect";
+import { HttpBody, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { causeMessage } from "../errors/index.js";
 
 export interface AddBookmarkInput {
   url: string;
@@ -11,94 +9,184 @@ export interface AddBookmarkInput {
   note?: string;
 }
 
-const bookmarkResponseSchema = z.object({
-  id: z.string(),
-});
+export interface KarakeepCredentials {
+  readonly baseUrl: string;
+  readonly apiKey: string | Redacted.Redacted<string>;
+}
 
-export class KarakeepClient {
-  private client: Got;
-
-  constructor(
-    private baseUrl: string,
-    apiKey: string,
-  ) {
-    this.client = got.extend({
-      prefixUrl: `${baseUrl}/api/v1`,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      timeout: { request: 10_000 },
-      retry: { limit: 2, methods: ["POST"] },
-      responseType: "json",
-    });
-  }
-
-  async createBookmark(input: Omit<AddBookmarkInput, "tags">) {
-    const response = await this.client.post("bookmarks", {
-      json: {
-        type: "link",
-        url: input.url,
-        archived: input.archived ?? false,
-        note: input.note,
-      },
-    });
-    return bookmarkResponseSchema.parse(response.body);
-  }
-
-  async attachTags(bookmarkId: string, tags: string[]) {
-    await this.client.post(`bookmarks/${bookmarkId}/tags`, {
-      json: { tags: tags.map((tagName) => ({ tagName })) },
-    });
-  }
-
-  getBookmarkUrl(bookmarkId: string) {
-    return `${this.baseUrl}/dashboard/preview/${bookmarkId}`;
+/** A Karakeep API call failed (transport, status, decode, or timeout). */
+export class KarakeepError extends Data.TaggedError("KarakeepError")<{
+  readonly operation: "createBookmark" | "attachTags";
+  readonly url: string | undefined;
+  readonly bookmarkId: string | undefined;
+  readonly cause: unknown;
+}> {
+  override get message(): string {
+    return `Karakeep ${this.operation} failed: ${causeMessage(this.cause)}`;
   }
 }
 
-function getClient(): KarakeepClient | null {
-  const url = process.env.KARAKEEP_URL;
-  const apiKey = process.env.KARAKEEP_API_KEY;
-  if (!url || !apiKey) return null;
-  return new KarakeepClient(url, apiKey);
+/** `Karakeep.layerConfig` found no `KARAKEEP_URL` / `KARAKEEP_API_KEY`. */
+export class KarakeepDisabledError extends Data.TaggedError("KarakeepDisabledError") {
+  override get message(): string {
+    return "Karakeep integration disabled (KARAKEEP_URL / KARAKEEP_API_KEY not set)";
+  }
 }
 
-/**
- * Add a URL as a bookmark in Karakeep, optionally with tags and a note.
- * Returns the bookmark URL on success, undefined if disabled or on failure.
- */
-export async function addBookmark(
-  input: AddBookmarkInput,
-  logger: Logger,
-): Promise<string | undefined> {
-  const client = getClient();
-  if (!client) {
-    logger.info("Karakeep integration disabled (missing env vars)");
-    return undefined;
+const BookmarkResponse = Schema.Struct({ id: Schema.String });
+
+const REQUEST_TIMEOUT = "10 seconds";
+
+export class Karakeep extends Context.Service<
+  Karakeep,
+  {
+    readonly enabled: boolean;
+    createBookmark(
+      input: Omit<AddBookmarkInput, "tags">,
+    ): Effect.Effect<{ id: string }, KarakeepError | KarakeepDisabledError>;
+    attachTags(
+      bookmarkId: string,
+      tags: string[],
+    ): Effect.Effect<void, KarakeepError | KarakeepDisabledError>;
+    /** The dashboard URL of a bookmark. */
+    bookmarkUrl(bookmarkId: string): string;
+    /**
+     * Creates the bookmark, attaches `tags`, and resolves the dashboard URL.
+     * A tag failure still fails (with the `bookmarkId` on the error) so the
+     * caller can see the bookmark exists.
+     */
+    addBookmark(
+      input: AddBookmarkInput,
+    ): Effect.Effect<string, KarakeepError | KarakeepDisabledError>;
+  }
+>()("@micthiesen/mitools/Karakeep") {
+  static layer(
+    credentials: KarakeepCredentials,
+  ): Layer.Layer<Karakeep, never, HttpClient.HttpClient> {
+    return Layer.effect(
+      Karakeep,
+      Effect.gen(function* () {
+        const apiKey =
+          typeof credentials.apiKey === "string"
+            ? credentials.apiKey
+            : Redacted.value(credentials.apiKey);
+        const client = (yield* HttpClient.HttpClient).pipe(
+          HttpClient.mapRequest((request) =>
+            request.pipe(
+              HttpClientRequest.prependUrl(`${credentials.baseUrl}/api/v1`),
+              HttpClientRequest.bearerToken(apiKey),
+              HttpClientRequest.setHeader("Content-Type", "application/json"),
+            ),
+          ),
+          HttpClient.filterStatusOk,
+          HttpClient.retryTransient({ times: 2 }),
+        );
+
+        const bookmarkUrl = (bookmarkId: string) =>
+          `${credentials.baseUrl}/dashboard/preview/${bookmarkId}`;
+
+        const createBookmark = Effect.fn("Karakeep.createBookmark")(
+          function* (input: Omit<AddBookmarkInput, "tags">) {
+            const response = yield* client.post("/bookmarks", {
+              body: HttpBody.jsonUnsafe({
+                type: "link",
+                url: input.url,
+                archived: input.archived ?? false,
+                note: input.note,
+              }),
+            });
+            const json = yield* response.json;
+            return yield* Schema.decodeUnknownEffect(BookmarkResponse)(json);
+          },
+          (effect, input) =>
+            effect.pipe(
+              Effect.timeout(REQUEST_TIMEOUT),
+              Effect.mapError(
+                (cause) =>
+                  new KarakeepError({
+                    operation: "createBookmark",
+                    url: input.url,
+                    bookmarkId: undefined,
+                    cause,
+                  }),
+              ),
+            ),
+        );
+
+        const attachTags = Effect.fn("Karakeep.attachTags")(
+          function* (bookmarkId: string, tags: string[]) {
+            yield* client.post(`/bookmarks/${bookmarkId}/tags`, {
+              body: HttpBody.jsonUnsafe({ tags: tags.map((tagName) => ({ tagName })) }),
+            });
+          },
+          (effect, bookmarkId) =>
+            effect.pipe(
+              Effect.timeout(REQUEST_TIMEOUT),
+              Effect.mapError(
+                (cause) =>
+                  new KarakeepError({
+                    operation: "attachTags",
+                    url: undefined,
+                    bookmarkId,
+                    cause,
+                  }),
+              ),
+            ),
+        );
+
+        const addBookmark = Effect.fn("Karakeep.addBookmark")(function* (
+          input: AddBookmarkInput,
+        ) {
+          const { id } = yield* createBookmark(input);
+          if (input.tags?.length) yield* attachTags(id, input.tags);
+          return bookmarkUrl(id);
+        });
+
+        return Karakeep.of({
+          enabled: true,
+          createBookmark,
+          attachTags,
+          bookmarkUrl,
+          addBookmark,
+        });
+      }),
+    );
   }
 
-  const result = await tryCatch(() => client.createBookmark(input));
-  if (!result.ok) {
-    logger.warn("Failed to add bookmark to Karakeep", {
-      error: extractHttpError(result.error),
-      url: input.url,
-    });
-    return undefined;
-  }
+  /** Every call fails with `KarakeepDisabledError`. */
+  static readonly layerDisabled: Layer.Layer<Karakeep> = Layer.succeed(
+    Karakeep,
+    Karakeep.of({
+      enabled: false,
+      createBookmark: () => new KarakeepDisabledError(),
+      attachTags: () => new KarakeepDisabledError(),
+      bookmarkUrl: (bookmarkId) => bookmarkId,
+      addBookmark: () => new KarakeepDisabledError(),
+    }),
+  );
 
-  const bookmarkId = result.value.id;
-
-  if (input.tags?.length) {
-    const tagResult = await tryCatch(() => client.attachTags(bookmarkId, input.tags!));
-    if (!tagResult.ok) {
-      logger.warn("Failed to attach tags to Karakeep bookmark", {
-        error: extractHttpError(tagResult.error),
-        bookmarkId,
-        tags: input.tags,
+  /** Reads `KARAKEEP_URL` and `KARAKEEP_API_KEY`; disabled when either is missing. */
+  static readonly layerConfig: Layer.Layer<
+    Karakeep,
+    Config.ConfigError,
+    HttpClient.HttpClient
+  > = Layer.unwrap(
+    Effect.gen(function* () {
+      const { baseUrl, apiKey } = yield* Config.all({
+        baseUrl: Config.string("KARAKEEP_URL").pipe(Config.withDefault(undefined)),
+        apiKey: Config.redacted("KARAKEEP_API_KEY").pipe(Config.withDefault(undefined)),
       });
-    }
-  }
-
-  return client.getBookmarkUrl(bookmarkId);
+      if (!baseUrl || !apiKey) {
+        yield* Effect.logDebug(
+          "Karakeep disabled: KARAKEEP_URL / KARAKEEP_API_KEY not set",
+        );
+        return Karakeep.layerDisabled;
+      }
+      return Karakeep.layer({ baseUrl, apiKey });
+    }),
+  );
 }
+
+/** Adds a bookmark through the `Karakeep` service and resolves its dashboard URL. */
+export const addBookmark = (input: AddBookmarkInput) =>
+  Karakeep.use((karakeep) => karakeep.addBookmark(input));

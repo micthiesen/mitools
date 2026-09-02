@@ -1,16 +1,21 @@
-export abstract class ScheduledTask {
-  /** Human-readable name for logging */
-  public abstract readonly name: string;
+import type { Effect } from "effect";
 
-  /** Cron expression for node-cron (6 fields: second minute hour day month weekday) */
-  public abstract readonly schedule: string;
-
-  /** Optional max jitter in ms added before each run (default: 0) */
-  public readonly jitterMs: number = 0;
-
-  /** Whether to run immediately on startup (default: false) */
-  public readonly runOnStartup: boolean = false;
-
-  /** Execute the task */
-  public abstract run(): Promise<void>;
+/**
+ * A task the `Scheduler` runs on a cron schedule. Runs of one task never
+ * overlap: the next fire is computed after the previous run completes.
+ */
+export interface ScheduledTask<E = never, R = never> {
+  /** Human-readable name for logging. */
+  readonly name: string;
+  /**
+   * Cron expression, seconds first: `second minute hour day month weekday`.
+   * A five-field expression is accepted (seconds = 0).
+   */
+  readonly schedule: string;
+  /** Max jitter in ms added before each run (default 0). */
+  readonly jitterMs?: number;
+  /** Whether to run once immediately after `start` (default false). */
+  readonly runOnStartup?: boolean;
+  /** The work. A failure or defect is logged as an error and never stops the schedule. */
+  readonly run: Effect.Effect<void, E, R>;
 }

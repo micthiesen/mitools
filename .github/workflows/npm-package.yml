@@ -31,11 +31,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Lint
+      - name: Format and lint (biome)
         run: pnpm run check
+
+      - name: Effect diagnostics
+        run: pnpm run lint -- --format github-actions
 
       - name: Typecheck
         run: pnpm run typecheck
+
+      - name: Test
+        run: CI=true pnpm test
 
       - name: Build
         run: pnpm run build

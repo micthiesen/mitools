@@ -1,7 +1,52 @@
 {
+  "$schema": "./node_modules/@effect/tsgo/schema.json",
   "extends": "./tsconfig/library.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    // Effect-specific diagnostics run in editors, `pnpm lint`, and the patched
+    // `tsc` behind `pnpm typecheck` / `pnpm build` (`prepare` re-applies the
+    // patch after every install). CLI runs only surface error/warning/message
+    // severities, so every rule this project relies on is promoted to
+    // "warning" here; at their default "suggestion" severity the Effect-native
+    // rules never reach a CLI run and a silent lint would prove nothing.
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "includeSuggestionsInTsc": true,
+        "diagnosticSeverity": {
+          "anyUnknownInErrorContext": "warning",
+          "catchUnfailableEffect": "warning",
+          "unnecessaryEffectGen": "warning",
+          "runEffectInsideEffect": "warning",
+          "tryCatchInEffectGen": "warning",
+          "returnEffectInGen": "warning",
+          "flatMapToMap": "warning",
+          "catchAllToMapError": "warning",
+          "catchToIgnore": "warning",
+          "catchToOrElseSucceed": "warning",
+          "effectMapVoid": "warning",
+          "effectSucceedWithVoid": "warning",
+          "unnecessaryFailYieldableError": "warning",
+          "unnecessaryPipe": "warning",
+          "unnecessaryPipeChain": "warning",
+          "effectMapFlatten": "warning",
+          "nestedEffectGenYield": "warning",
+          "lazyPromiseInEffectSync": "warning",
+          "globalDateInEffect": "warning",
+          "globalTimersInEffect": "warning",
+          "globalRandomInEffect": "warning",
+          "globalFetchInEffect": "warning",
+          "newPromise": "warning",
+          "asyncFunction": "warning",
+          "leakingRequirements": "warning",
+          "schemaSyncInEffect": "warning",
+          "preferUnsafeConstructor": "warning",
+          "syncToSucceed": "warning",
+          "redundantMapError": "warning",
+          "redundantOrDie": "warning"
+        }
+      }
+    ]
   }
 }

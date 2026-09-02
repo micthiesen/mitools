@@ -1,35 +1,28 @@
-import { HTTPError } from "got";
+import { HttpClientError } from "effect/unstable/http";
 
 export interface HttpErrorInfo {
-  statusCode: number;
-  statusMessage: string;
-  body: unknown;
+  /** The failing reason's tag: TransportError, StatusCodeError, DecodeError, ... */
+  kind: string;
+  statusCode?: number;
   url: string;
   method: string;
+  description?: string;
+  message: string;
 }
 
 /**
- * Extracts clean, loggable info from a got HTTPError.
- * Returns the original error if it's not an HTTPError.
+ * Extracts clean, loggable info from an `HttpClientError` (effect/unstable/http).
+ * Returns the original value if it's not an HttpClientError.
  */
-export function extractHttpError(error: unknown): HttpErrorInfo | unknown {
-  if (!(error instanceof HTTPError)) return error;
-
-  const { response } = error;
-  let body: unknown = response.body;
-  if (typeof body === "string") {
-    try {
-      body = JSON.parse(body);
-    } catch {
-      // keep as string
-    }
-  }
-
+export function httpErrorInfo(error: unknown): HttpErrorInfo | unknown {
+  if (!HttpClientError.isHttpClientError(error)) return error;
+  const { reason } = error;
   return {
-    statusCode: response.statusCode,
-    statusMessage: response.statusMessage ?? "",
-    body,
-    url: response.url,
-    method: response.request?.options?.method ?? "UNKNOWN",
-  };
+    kind: reason._tag,
+    statusCode: error.response?.status,
+    url: error.request.url,
+    method: error.request.method,
+    description: "description" in reason ? reason.description : undefined,
+    message: error.message,
+  } satisfies HttpErrorInfo;
 }

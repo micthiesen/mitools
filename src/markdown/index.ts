@@ -1,6 +1,8 @@
-/** Generate a filesystem-safe timestamp for log filenames, e.g. "2026-03-16T14-30-05". */
-export function logTimestamp(): string {
-  const d = new Date();
+/**
+ * Generate a filesystem-safe timestamp for log filenames, e.g. "2026-03-16T14-30-05".
+ * Pass the date explicitly from Effect code (`DateTime.toDate(yield* DateTime.now)`).
+ */
+export function logTimestamp(d: Date = new Date()): string {
   const pad = (n: number) => n.toString().padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
 }

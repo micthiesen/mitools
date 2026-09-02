@@ -1,92 +1,149 @@
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, it } from "@effect/vitest";
+import { Data, Effect, Fiber, Layer, Ref, Result } from "effect";
+import { TestClock } from "effect/testing";
+import { Logger } from "../logging/index.js";
+import { LogLevel } from "../logging/types.js";
 import { withRetry } from "./index.js";
 
+/** Routes `Effect.log*` into a capturing mitools `Logger`. */
+const LogCapture = Logger.layerAdapter.pipe(Layer.provideMerge(Logger.layerCapture()));
+
+class FlakyError extends Data.TaggedError("FlakyError")<{
+  readonly attempt: number;
+}> {}
+
+/** An effect that counts its invocations and fails until `succeedOn`. */
+const flaky = (calls: Ref.Ref<number>, succeedOn: number) =>
+  Effect.gen(function* () {
+    const attempt = yield* Ref.updateAndGet(calls, (n) => n + 1);
+    if (attempt < succeedOn) return yield* new FlakyError({ attempt });
+    return "ok" as const;
+  });
+
 describe("withRetry", () => {
-  it("returns the result on first success", async () => {
-    const fn = vi.fn().mockResolvedValueOnce("ok");
-    const result = await withRetry(fn);
-    expect(result).toBe("ok");
-    expect(fn).toHaveBeenCalledTimes(1);
-  });
+  it.effect("returns the result on the first success", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0);
+      const result = yield* withRetry(flaky(calls, 1));
+      assert.strictEqual(result, "ok");
+      assert.strictEqual(yield* Ref.get(calls), 1);
+    }),
+  );
 
-  it("retries and eventually succeeds", async () => {
-    const fn = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("fail 1"))
-      .mockRejectedValueOnce(new Error("fail 2"))
-      .mockResolvedValueOnce("ok");
+  it.effect("retries and eventually succeeds", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0);
+      const fiber = yield* Effect.forkChild(
+        withRetry(flaky(calls, 3), {
+          maxAttempts: 3,
+          baseDelayMs: 1000,
+          maxDelayMs: 10_000,
+        }),
+      );
+      yield* TestClock.adjust("1 minute");
+      assert.strictEqual(yield* Fiber.join(fiber), "ok");
+      assert.strictEqual(yield* Ref.get(calls), 3);
+    }),
+  );
 
-    const result = await withRetry(fn, {
-      maxAttempts: 3,
-      baseDelayMs: 1,
-      maxDelayMs: 10,
-    });
+  it.effect("fails with the last error once the attempts are exhausted", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0);
+      const fiber = yield* Effect.forkChild(
+        withRetry(flaky(calls, 99), {
+          maxAttempts: 3,
+          baseDelayMs: 1000,
+          maxDelayMs: 10_000,
+        }).pipe(Effect.result),
+      );
+      yield* TestClock.adjust("1 minute");
+      const result = yield* Fiber.join(fiber);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.strictEqual(result.failure._tag, "FlakyError");
+        assert.strictEqual(result.failure.attempt, 3);
+      }
+      assert.strictEqual(yield* Ref.get(calls), 3);
+    }),
+  );
 
-    expect(result).toBe("ok");
-    expect(fn).toHaveBeenCalledTimes(3);
-  });
+  it.effect("stops after one attempt when shouldRetry returns false", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0);
+      const fiber = yield* Effect.forkChild(
+        withRetry(flaky(calls, 99), {
+          maxAttempts: 5,
+          baseDelayMs: 1000,
+          shouldRetry: () => false,
+        }).pipe(Effect.result),
+      );
+      yield* TestClock.adjust("1 minute");
+      const result = yield* Fiber.join(fiber);
+      assert.isTrue(Result.isFailure(result));
+      assert.strictEqual(yield* Ref.get(calls), 1);
+    }),
+  );
 
-  it("throws after max attempts exhausted", async () => {
-    const fn = vi.fn().mockRejectedValue(new Error("always fails"));
+  it.effect("backs off exponentially between attempts", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0);
+      const fiber = yield* Effect.forkChild(
+        withRetry(flaky(calls, 99), {
+          maxAttempts: 3,
+          baseDelayMs: 1000,
+          maxDelayMs: 30_000,
+        }).pipe(Effect.result),
+      );
 
-    await expect(
-      withRetry(fn, { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 10 }),
-    ).rejects.toThrow("always fails");
+      // Jitter scales each delay by 0.8x-1.2x, so assert with slack: the
+      // second attempt cannot land before 800ms and must land by 2s.
+      yield* TestClock.adjust("500 millis");
+      assert.strictEqual(yield* Ref.get(calls), 1);
+      yield* TestClock.adjust("1500 millis");
+      assert.strictEqual(yield* Ref.get(calls), 2);
+      // Third delay is ~2s, so attempt 3 cannot have happened yet at t=2s
+      // and must have happened by t=5s.
+      yield* TestClock.adjust("3 seconds");
+      assert.strictEqual(yield* Ref.get(calls), 3);
 
-    expect(fn).toHaveBeenCalledTimes(3);
-  });
+      yield* Fiber.join(fiber);
+    }),
+  );
 
-  it("respects shouldRetry predicate and stops early", async () => {
-    const nonRetryable = new Error("fatal");
-    const fn = vi.fn().mockRejectedValue(nonRetryable);
+  it.effect("caps the delay at maxDelayMs", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0);
+      const maxAttempts = 6;
+      const fiber = yield* Effect.forkChild(
+        withRetry(flaky(calls, 99), {
+          maxAttempts,
+          baseDelayMs: 1000,
+          maxDelayMs: 1000,
+        }).pipe(Effect.result),
+      );
+      // Uncapped, attempt 6 would need 1+2+4+8+16 = 31s.
+      yield* TestClock.adjust(`${maxAttempts * 1500} millis`);
+      const result = yield* Fiber.join(fiber);
+      assert.isTrue(Result.isFailure(result));
+      assert.strictEqual(yield* Ref.get(calls), maxAttempts);
+    }),
+  );
 
-    await expect(
-      withRetry(fn, {
-        maxAttempts: 5,
-        baseDelayMs: 1,
-        shouldRetry: (err) => err !== nonRetryable,
-      }),
-    ).rejects.toThrow("fatal");
+  it.effect("logs a warning for every retry", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0);
+      const fiber = yield* Effect.forkChild(
+        withRetry(flaky(calls, 3), { maxAttempts: 3, baseDelayMs: 1000 }),
+      );
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.join(fiber);
 
-    expect(fn).toHaveBeenCalledTimes(1);
-  });
-
-  it("tracks the correct number of attempts", async () => {
-    let attempts = 0;
-    const fn = vi.fn().mockImplementation(async () => {
-      attempts++;
-      if (attempts < 4) throw new Error(`attempt ${attempts}`);
-      return "done";
-    });
-
-    const result = await withRetry(fn, {
-      maxAttempts: 5,
-      baseDelayMs: 1,
-      maxDelayMs: 10,
-    });
-
-    expect(result).toBe("done");
-    expect(attempts).toBe(4);
-    expect(fn).toHaveBeenCalledTimes(4);
-  });
-
-  it("logs warnings on retries when a logger is provided", async () => {
-    const logger = { warn: vi.fn(), debug: vi.fn(), info: vi.fn(), error: vi.fn() };
-    const fn = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("transient"))
-      .mockResolvedValueOnce("ok");
-
-    await withRetry(fn, {
-      maxAttempts: 3,
-      baseDelayMs: 1,
-      logger: logger as never,
-    });
-
-    expect(logger.warn).toHaveBeenCalledTimes(1);
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("Attempt 1/3 failed"),
-      expect.any(Error),
-    );
-  });
+      const warnings = (yield* Logger.captured).filter(
+        (item) => item.level === LogLevel.WARN,
+      );
+      assert.strictEqual(warnings.length, 2);
+      assert.include(warnings[0]?.message ?? "", "Attempt 1/3 failed");
+      assert.include(warnings[0]?.formattedArgs ?? "", "FlakyError");
+    }).pipe(Effect.provide(LogCapture)),
+  );
 });
