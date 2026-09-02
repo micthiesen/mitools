@@ -35,7 +35,7 @@ jobs:
         run: pnpm run check
 
       - name: Effect diagnostics
-        run: pnpm run lint -- --format github-actions
+        run: pnpm exec effect-tsgo diagnostics --project tsconfig.json --strict --format github-actions
 
       - name: Typecheck
         run: pnpm run typecheck
