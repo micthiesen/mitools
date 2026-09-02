@@ -10,6 +10,7 @@
     "./errors": "./dist/errors/index.js",
     "./collections": "./dist/collections/index.js",
     "./config": "./dist/config/index.js",
+    "./cli": "./dist/cli/index.js",
     "./sqlite": "./dist/persistence/sqlite.js",
     "./docstore": "./dist/persistence/docstore.js",
     "./entities": "./dist/persistence/entities.js",
@@ -18,12 +19,18 @@
     "./logfile": "./dist/services/logfile.js",
     "./pushover": "./dist/services/pushover.js",
     "./async": "./dist/async/index.js",
+    "./proc": "./dist/proc/index.js",
+    "./locks": "./dist/locks/index.js",
+    "./probes": "./dist/probes/index.js",
     "./strings": "./dist/utils/strings.js",
     "./types": "./dist/types/index.js",
     "./http": "./dist/http/index.js",
     "./karakeep": "./dist/karakeep/index.js",
     "./scheduling": "./dist/scheduling/index.js",
     "./streams": "./dist/streams/index.js",
+    "./boundary": "./dist/boundary/index.js",
+    "./react": "./dist/react/index.js",
+    "./testing": "./dist/testing/index.js",
     "./text": "./dist/text/index.js",
     "./xml": "./dist/xml/index.js",
     "./markdown": "./dist/markdown/index.js",
@@ -43,7 +50,8 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
-    "cbor": "^10.0.12"
+    "cbor": "^10.0.12",
+    "smol-toml": "^1.8.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
@@ -51,7 +59,9 @@
     "@effect/vitest": "4.0.0-rc.112",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
     "effect": "4.0.0-rc.112",
+    "react": "^19.2.8",
     "tsx": "^4.23.1",
     "typescript": "7.0.2",
     "vite": "^8.1.4",
@@ -74,6 +84,7 @@
   },
   "peerDependencies": {
     "effect": ">=4.0.0-rc.112 <4.1",
+    "react": ">=18",
     "vite": ">=8",
     "vitest": ">=4.1.0 <5"
   },
@@ -82,6 +93,9 @@
       "optional": true
     },
     "vitest": {
+      "optional": true
+    },
+    "react": {
       "optional": true
     }
   }

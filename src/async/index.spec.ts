@@ -1,12 +1,29 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Data, Effect, Fiber, Layer, Ref, Result } from "effect";
+import {
+  Clock,
+  Data,
+  Effect,
+  Fiber,
+  Layer,
+  Random,
+  Ref,
+  Result,
+  Schedule,
+} from "effect";
 import { TestClock } from "effect/testing";
 import { Logger } from "../logging/index.js";
 import { LogLevel } from "../logging/types.js";
-import { withRetry } from "./index.js";
+import { exponentialBackoff, lockContention, spacedUpTo, withRetry } from "./index.js";
 
 /** Routes `Effect.log*` into a capturing mitools `Logger`. */
 const LogCapture = Logger.layerAdapter.pipe(Layer.provideMerge(Logger.layerCapture()));
+
+/** A `Random` whose doubles are 0.5, so jitter lands exactly on the base delay. */
+const withFixedRandom = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.provideService(effect, Random.Random, {
+    nextIntUnsafe: () => 0,
+    nextDoubleUnsafe: () => 0.5,
+  });
 
 class FlakyError extends Data.TaggedError("FlakyError")<{
   readonly attempt: number;
@@ -145,5 +162,59 @@ describe("withRetry", () => {
       assert.include(warnings[0]?.message ?? "", "Attempt 1/3 failed");
       assert.include(warnings[0]?.formattedArgs ?? "", "FlakyError");
     }).pipe(Effect.provide(LogCapture)),
+  );
+});
+
+describe("Schedule presets", () => {
+  const delays = <O>(schedule: Schedule.Schedule<O, string>, attempts: number) =>
+    Effect.gen(function* () {
+      const times: number[] = [];
+      let n = 0;
+      const fiber = yield* Effect.forkChild(
+        Effect.gen(function* () {
+          times.push(yield* Clock.currentTimeMillis);
+          n += 1;
+          if (n <= attempts) return yield* Effect.fail("again");
+        }).pipe(Effect.retry(schedule), Effect.ignore),
+      );
+      // Drive the clock far enough for any of the presets under test.
+      for (let i = 0; i < 40; i++) yield* TestClock.adjust("1 second");
+      yield* Fiber.join(fiber);
+      return times.slice(1).map((t, i) => t - (times[i] ?? 0));
+    });
+
+  it.effect("exponentialBackoff doubles up to the cap and recurs forever", () =>
+    Effect.gen(function* () {
+      const gaps = yield* delays(
+        exponentialBackoff({ baseDelayMs: 1000, maxDelayMs: 3000 }).pipe(
+          Schedule.setInputType<string>(),
+        ),
+        5,
+      ).pipe(withFixedRandom);
+      assert.deepStrictEqual(gaps, [1000, 2000, 3000, 3000, 3000]);
+    }),
+  );
+
+  it.effect("spacedUpTo stops once the deadline has elapsed", () =>
+    Effect.gen(function* () {
+      const gaps = yield* delays(
+        spacedUpTo(1000, 2500).pipe(Schedule.setInputType<string>()),
+        10,
+      ).pipe(withFixedRandom);
+      // Retries at 1s, 2s and 3s: the deadline is checked on the step after
+      // each failure (2s elapsed < 2.5s), so the last retry lands past it.
+      assert.deepStrictEqual(gaps, [1000, 1000, 1000]);
+    }),
+  );
+
+  it.effect("lockContention polls every 150ms until the timeout", () =>
+    Effect.gen(function* () {
+      const gaps = yield* delays(
+        lockContention(500).pipe(Schedule.setInputType<string>()),
+        10,
+      ).pipe(withFixedRandom);
+      // 150, 300, 450 (elapsed still under 500) and one final retry at 600.
+      assert.deepStrictEqual(gaps, [150, 150, 150, 150]);
+    }),
   );
 });

@@ -2,6 +2,50 @@
   "extends": "./node.json",
   "compilerOptions": {
     "declaration": true,
-    "declarationMap": true
+    "declarationMap": true,
+    // Effect-specific diagnostics for editors, `effect-tsgo diagnostics`
+    // (`pnpm lint`) and the patched `tsc` (`pnpm typecheck` / `pnpm build`).
+    // CLI runs only surface error/warning/message severities, so every rule a
+    // consumer relies on is promoted to "warning" here; at their default
+    // "suggestion" severity the Effect-native rules never reach a CLI run.
+    // `effectFnOpportunity` stays off: it is inert even when promoted.
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "includeSuggestionsInTsc": true,
+        "diagnosticSeverity": {
+          "anyUnknownInErrorContext": "warning",
+          "catchUnfailableEffect": "warning",
+          "unnecessaryEffectGen": "warning",
+          "runEffectInsideEffect": "warning",
+          "tryCatchInEffectGen": "warning",
+          "returnEffectInGen": "warning",
+          "flatMapToMap": "warning",
+          "catchAllToMapError": "warning",
+          "catchToIgnore": "warning",
+          "catchToOrElseSucceed": "warning",
+          "effectMapVoid": "warning",
+          "effectSucceedWithVoid": "warning",
+          "unnecessaryFailYieldableError": "warning",
+          "unnecessaryPipe": "warning",
+          "unnecessaryPipeChain": "warning",
+          "effectMapFlatten": "warning",
+          "nestedEffectGenYield": "warning",
+          "lazyPromiseInEffectSync": "warning",
+          "globalDateInEffect": "warning",
+          "globalTimersInEffect": "warning",
+          "globalRandomInEffect": "warning",
+          "globalFetchInEffect": "warning",
+          "newPromise": "warning",
+          "asyncFunction": "warning",
+          "leakingRequirements": "warning",
+          "schemaSyncInEffect": "warning",
+          "preferUnsafeConstructor": "warning",
+          "syncToSucceed": "warning",
+          "redundantMapError": "warning",
+          "redundantOrDie": "warning"
+        }
+      }
+    ]
   }
 }

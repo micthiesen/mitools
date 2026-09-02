@@ -1,5 +1,7 @@
 import { Duration, Effect, Schedule } from "effect";
 
+export { type Debounced, makeDebounced } from "./debounce.js";
+
 export interface RetryOptions<E = unknown> {
   /** Maximum number of attempts before giving up (including the first try). Default 3. */
   readonly maxAttempts?: number;
@@ -14,10 +16,52 @@ export interface RetryOptions<E = unknown> {
 const defaults = { maxAttempts: 3, baseDelayMs: 1000, maxDelayMs: 30_000 };
 
 /**
- * Exponential backoff with jitter, capped at `maxDelayMs`, for at most
- * `maxAttempts` attempts. Delay before retry n (1-based):
- * `min(baseDelayMs * 2^(n-1), maxDelayMs)`, jittered. Every retry logs a
- * warning with the attempt number and the failure.
+ * Jittered exponential backoff capped at `maxDelayMs`: the delay before
+ * retry n (1-based) is `min(baseDelayMs * 2^(n-1), maxDelayMs)`, jittered.
+ * Recurs forever; bound it with `Schedule.upTo` or `Schedule.recurs`.
+ */
+export function exponentialBackoff(options: {
+  readonly baseDelayMs: number;
+  readonly maxDelayMs: number;
+}): Schedule.Schedule<Duration.Duration> {
+  return Schedule.min([
+    Schedule.exponential(options.baseDelayMs),
+    Schedule.spaced(options.maxDelayMs),
+  ]).pipe(Schedule.jittered);
+}
+
+/**
+ * Jittered fixed spacing that stops once `deadlineMs` has elapsed. The
+ * shape behind every "poll until the deadline" loop:
+ * `Effect.repeat(check, { schedule: spacedUpTo(100, 5000), until: (ok) => ok })`
+ * or `Effect.retry(attempt, spacedUpTo(150, 120_000))`.
+ */
+export function spacedUpTo(
+  intervalMs: number,
+  deadlineMs: number,
+): Schedule.Schedule<number> {
+  return Schedule.spaced(Duration.millis(intervalMs)).pipe(
+    Schedule.jittered,
+    Schedule.upTo({ duration: Duration.millis(deadlineMs) }),
+  );
+}
+
+/**
+ * The lock-contention schedule: poll every `pollMs` (default 150 ms,
+ * jittered so competing processes never retry in lockstep) for at most
+ * `timeoutMs`.
+ */
+export function lockContention(
+  timeoutMs: number,
+  pollMs = 150,
+): Schedule.Schedule<number> {
+  return spacedUpTo(pollMs, timeoutMs);
+}
+
+/**
+ * `exponentialBackoff` for at most `maxAttempts` attempts, with a warning
+ * logged before every retry naming the attempt and the failure. Stops early
+ * when `shouldRetry` returns false.
  */
 export function retrySchedule<E = unknown>(
   options: RetryOptions<E> = {},
@@ -27,9 +71,7 @@ export function retrySchedule<E = unknown>(
     ...options,
   };
   return Schedule.max([
-    Schedule.min([Schedule.exponential(baseDelayMs), Schedule.spaced(maxDelayMs)]).pipe(
-      Schedule.jittered,
-    ),
+    exponentialBackoff({ baseDelayMs, maxDelayMs }),
     Schedule.recurs(maxAttempts - 1),
   ]).pipe(
     Schedule.setInputType<E>(),

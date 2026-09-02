@@ -11,7 +11,16 @@ import {
   Layer,
   Ref,
   References,
+  type Scope,
 } from "effect";
+import {
+  captureSink,
+  consoleSink,
+  type DailyFileSinkOptions,
+  dailyFileSink,
+  formatConsoleLine,
+} from "./sinks.js";
+import { layerTracer } from "./tracer.js";
 import {
   formatArgs,
   LOG_LEVEL_ORDINAL,
@@ -19,15 +28,10 @@ import {
   type LogItem,
   LogLevel,
   type LogNotification,
+  type LogSink,
+  type LogSinkInput,
   type LogTap,
 } from "./types.js";
-
-const LOG_PREFIX: Record<LogLevel, string> = {
-  [LogLevel.DEBUG]: "[DEBUG]",
-  [LogLevel.INFO]: " [INFO]",
-  [LogLevel.WARN]: " [WARN]",
-  [LogLevel.ERROR]: "[ERROR]",
-};
 
 /** Annotation key the Effect logger adapter reads as the logger name. */
 export const LOGGER_ANNOTATION = "logger";
@@ -51,8 +55,16 @@ export const InsideLogHook = Context.Reference<boolean>(
  */
 export interface NamedLogger {
   readonly name: string;
-  /** A child logger named `${name}:${child}` (or the same name when `null`). */
+  /** The channel every item from this logger carries, or undefined for the default channel. */
+  readonly channelName: string | undefined;
+  /** A child logger named `${name}:${child}` (or the same name when `null`), on the same channel. */
   extend(child: string | null): NamedLogger;
+  /**
+   * The same logger emitting on `channel` (see `LogItem.channel`): a sink
+   * such as `channelSink(toast, "attention")` picks those lines out while
+   * every other sink still records them. `null` returns to the default channel.
+   */
+  channel(channel: string | null): NamedLogger;
   log(
     level: LogLevel,
     message: string,
@@ -64,11 +76,11 @@ export interface NamedLogger {
   error(message: string, ...args: unknown[]): Effect.Effect<void, never, Logger>;
 }
 
-/** The sink behind every `NamedLogger` and behind `Effect.log*` (via the adapter). */
+/** The service behind every `NamedLogger` and behind `Effect.log*` (via the adapter). */
 export interface LoggerShape {
-  /** Threshold below which console output is suppressed; the tap still sees everything. */
+  /** Threshold below which items reach no sink; the tap still sees everything. */
   readonly level: LogLevel;
-  /** Emits one log item: tap, threshold, console, capture, hooks. */
+  /** Emits one log item: tap, threshold, sinks (in order), hooks. */
   emit(item: LogItem): Effect.Effect<void>;
   /**
    * `emit` for synchronous callers (Effect's own `Logger.log` contract). Runs
@@ -78,13 +90,19 @@ export interface LoggerShape {
    * item is written straight to the console instead of being dropped.
    */
   emitUnsafe(item: LogItem, insideHook?: boolean): void;
-  /** Waits for every hook fiber started so far. Run before process exit. */
+  /** Waits for every hook fiber started so far and for every sink's buffer. Run before process exit. */
   readonly flush: Effect.Effect<void>;
 }
 
 export interface LoggerOptions<R = never> {
-  /** Console threshold. Defaults to `LogLevel.INFO`. */
+  /** Sink threshold. Defaults to `LogLevel.INFO`. */
   readonly level?: LogLevel;
+  /**
+   * Where lines at or above `level` go, in order. Defaults to the console
+   * (`Logger.consoleSink`); pass an explicit list to add or replace it, e.g.
+   * `[Logger.consoleSink, Logger.dailyFileSink({ directory, prefix })]`.
+   */
+  readonly sinks?: ReadonlyArray<LogSinkInput<R>>;
   /** Called on every `error` log. Pair with `Pushover.logHook` to keep the old default. */
   readonly onError?: LogHook<R>;
   /** Called on every `warn` log. */
@@ -118,11 +136,11 @@ export class Logger extends Context.Service<Logger, LoggerShape>()(
     (l) => l.flush,
   );
 
-  /** Console sink with the given threshold, hooks and tap. */
+  /** The given sinks (default: console) with the threshold, hooks and tap. */
   static layer<R = never>(
     options: LoggerOptions<R> = {},
   ): Layer.Layer<Logger, never, R> {
-    return Layer.effect(Logger, makeSink(options, { console: true }));
+    return Layer.effect(Logger, makeService(options, options.sinks ?? [consoleSink]));
   }
 
   /**
@@ -144,9 +162,9 @@ export class Logger extends Context.Service<Logger, LoggerShape>()(
   }
 
   /**
-   * A sink that records items at or above `level` into `CapturedLogs` instead
-   * of printing them (hooks and the tap still run exactly as with `layer`).
-   * For tests: read with `Logger.captured`.
+   * Records items at or above `level` into `CapturedLogs` instead of printing
+   * them (hooks, the tap and any extra `sinks` still run exactly as with
+   * `layer`). For tests: read with `Logger.captured`.
    */
   static layerCapture<R = never>(
     options: LoggerOptions<R> = {},
@@ -155,7 +173,10 @@ export class Logger extends Context.Service<Logger, LoggerShape>()(
       Logger,
       Effect.gen(function* () {
         const captured = yield* CapturedLogs;
-        return yield* makeSink(options, { console: false, captured });
+        return yield* makeService(options, [
+          captureSink(captured),
+          ...(options.sinks ?? []),
+        ]);
       }),
     ).pipe(
       Layer.provideMerge(
@@ -196,9 +217,26 @@ export class Logger extends Context.Service<Logger, LoggerShape>()(
     EffectLogger.layer([Logger.effectLogger]),
     Layer.succeed(References.MinimumLogLevel, "All"),
   );
+
+  /** The default sink: the Effect `Console` service. */
+  static readonly consoleSink: Effect.Effect<LogSink> = consoleSink;
+
+  /** One file per local day with retention; see `dailyFileSink` in `./sinks`. */
+  static dailyFileSink(
+    options: DailyFileSinkOptions,
+  ): Effect.Effect<LogSink, never, Scope.Scope> {
+    return dailyFileSink(options);
+  }
+
+  /**
+   * A `Tracer` that writes every ended `Effect.fn` / `Effect.withSpan` span
+   * to this logger at debug: name, duration, parent and outcome. Provide it
+   * alongside `layer`; nothing else consumes the span names otherwise.
+   */
+  static readonly layerTracer: Layer.Layer<never, never, Logger> = layerTracer;
 }
 
-function makeNamed(name: string): NamedLogger {
+function makeNamed(name: string, channelName?: string): NamedLogger {
   const log = (level: LogLevel, message: string, ...args: unknown[]) =>
     Effect.gen(function* () {
       const sink = yield* Logger;
@@ -210,22 +248,20 @@ function makeNamed(name: string): NamedLogger {
         message,
         args,
         formattedArgs: args.length > 0 ? formatArgs(args) : undefined,
+        ...(channelName !== undefined && { channel: channelName }),
       });
     });
   return {
     name,
-    extend: (child) => makeNamed(child ? `${name}:${child}` : name),
+    channelName,
+    extend: (child) => makeNamed(child ? `${name}:${child}` : name, channelName),
+    channel: (channel) => makeNamed(name, channel ?? undefined),
     log,
     debug: (message, ...args) => log(LogLevel.DEBUG, message, ...args),
     info: (message, ...args) => log(LogLevel.INFO, message, ...args),
     warn: (message, ...args) => log(LogLevel.WARN, message, ...args),
     error: (message, ...args) => log(LogLevel.ERROR, message, ...args),
   };
-}
-
-function formatLine(item: LogItem): string {
-  const time = new Date(item.timestamp).toISOString().slice(11, 23); // HH:mm:ss.mmm
-  return `${time} ${LOG_PREFIX[item.level]} <${item.loggerName}> ${item.message}`;
 }
 
 function toNotification(item: LogItem): LogNotification {
@@ -237,9 +273,9 @@ function toNotification(item: LogItem): LogNotification {
   };
 }
 
-const makeSink = Effect.fnUntraced(function* <R>(
+const makeService = Effect.fnUntraced(function* <R>(
   options: LoggerOptions<R>,
-  output: { console: boolean; captured?: Ref.Ref<ReadonlyArray<LogItem>> },
+  sinkInputs: ReadonlyArray<LogSinkInput<R>>,
 ) {
   const level = options.level ?? LogLevel.INFO;
   const threshold = LOG_LEVEL_ORDINAL[level];
@@ -247,11 +283,13 @@ const makeSink = Effect.fnUntraced(function* <R>(
   const runHook = yield* FiberSet.runtime(hooks)<R>();
   const services = yield* Effect.context<R>();
   const console = yield* Console.Console;
+  const sinks: Array<LogSink<R>> = [];
+  for (const input of sinkInputs) {
+    sinks.push(Effect.isEffect(input) ? yield* input : input);
+  }
 
-  const reportHookFailure = (what: string) => (cause: Cause.Cause<unknown>) =>
-    Effect.sync(() =>
-      console.error(`Logger ${what} hook failed:`, Cause.pretty(cause)),
-    );
+  const reportFailure = (what: string) => (cause: Cause.Cause<unknown>) =>
+    Effect.sync(() => console.error(`Logger ${what} failed:`, Cause.pretty(cause)));
 
   let closed = false;
   yield* Effect.addFinalizer(() =>
@@ -265,7 +303,7 @@ const makeSink = Effect.fnUntraced(function* <R>(
       runHook(
         hook(notification).pipe(
           Effect.provideService(InsideLogHook, true),
-          Effect.catchCause(reportHookFailure(what)),
+          Effect.catchCause(reportFailure(`${what} hook`)),
           Effect.provide(services),
         ),
       );
@@ -279,16 +317,19 @@ const makeSink = Effect.fnUntraced(function* <R>(
           .onLog(item)
           .pipe(
             Effect.provideService(InsideLogHook, true),
-            Effect.catchCause(reportHookFailure("onLog")),
+            Effect.catchCause(reportFailure("onLog hook")),
             Effect.provide(services),
           );
       }
       if (LOG_LEVEL_ORDINAL[item.level] >= threshold) {
-        if (output.console) {
-          yield* Effect.sync(() => console[item.level](formatLine(item), ...item.args));
-        }
-        if (output.captured) {
-          yield* Ref.update(output.captured, (items) => [...items, item]);
+        for (const sink of sinks) {
+          yield* sink
+            .write(item)
+            .pipe(
+              Effect.provideService(InsideLogHook, true),
+              Effect.catchCause(reportFailure("sink")),
+              Effect.provide(services),
+            );
         }
       }
       if (insideHook) return;
@@ -303,15 +344,22 @@ const makeSink = Effect.fnUntraced(function* <R>(
     if (closed) {
       // The FiberSet is gone with the layer's scope; a line logged during
       // shutdown is exactly the one worth keeping, so print it directly.
-      if (LOG_LEVEL_ORDINAL[item.level] >= threshold && output.console) {
-        console[item.level](formatLine(item), ...item.args);
+      if (LOG_LEVEL_ORDINAL[item.level] >= threshold) {
+        console[item.level](formatConsoleLine(item), ...item.args);
       }
       return;
     }
     runHook(Effect.provideService(emit(item), InsideLogHook, insideHook));
   };
 
-  return Logger.of({ level, emit, emitUnsafe, flush: FiberSet.awaitEmpty(hooks) });
+  const flush = Effect.gen(function* () {
+    yield* FiberSet.awaitEmpty(hooks);
+    for (const sink of sinks) {
+      if (sink.flush) yield* Effect.provide(sink.flush, services);
+    }
+  });
+
+  return Logger.of({ level, emit, emitUnsafe, flush });
 });
 
 const EFFECT_LEVEL_MAP: Record<EffectLogLevel.LogLevel, LogLevel> = {

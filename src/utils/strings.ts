@@ -60,3 +60,11 @@ export function getTitleFromUrl(url: string): string {
     return "Untitled";
   }
 }
+
+/**
+ * Counts a noun: `pluralize(1, "file")` is "1 file", `pluralize(2, "file")` is
+ * "2 files". Pass `plural` for a noun that does not just take an "s".
+ */
+export function pluralize(count: number, singular: string, plural?: string): string {
+  return `${count} ${count === 1 ? singular : (plural ?? `${singular}s`)}`;
+}
