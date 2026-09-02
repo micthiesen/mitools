@@ -12,6 +12,14 @@ at your program's boundary.
 pnpm add @micthiesen/mitools effect@4.0.0-rc.112
 ```
 
+The `sqlite`, `docstore`, `entities` and `table` modules need better-sqlite3's
+native build; pnpm 10+ only runs it when allowed in `pnpm-workspace.yaml`:
+
+```yaml
+allowBuilds:
+  better-sqlite3: true
+```
+
 `effect` is a **peer dependency** (`>=4.0.0-rc.112 <4.1`), never bundled and
 never re-exported, so your project ends up with exactly one copy. If another
 dependency drags in a different 4.x release candidate, pin it. pnpm 10+ reads
