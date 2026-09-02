@@ -61,7 +61,7 @@
     "node": ">=20",
     "pnpm": ">=11"
   },
-  "packageManager": "pnpm@11.13.0",
+  "packageManager": "pnpm@11.25.0",
   "files": [
     "dist",
     "tsconfig",
