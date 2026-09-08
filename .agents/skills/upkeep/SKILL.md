@@ -1,6 +1,6 @@
 ---
 name: upkeep
-description: Full maintenance pass on this repo - upgrade Node/pnpm, all dependencies (including majors, researched via changelogs), and GitHub Actions, then verify everything and ship a version bump (CI publishes to npm). Use when the user invokes /upkeep or asks to update/upgrade dependencies, tooling, or "outdated stuff".
+description: Full maintenance pass on this repo - upgrade Node/pnpm, all dependencies (including majors, researched via changelogs), and GitHub Actions, then verify everything and ship a version bump (CI publishes to npm). Use when the user invokes $upkeep or asks to update/upgrade dependencies, tooling, or "outdated stuff".
 ---
 
 # Upkeep: full maintenance pass
