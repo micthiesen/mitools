@@ -8,7 +8,8 @@
     },
     "omni-notify": {
       "path": "../omni-notify",
-      "notes": "Downstream consumer of @micthiesen/mitools; origin of the upkeep skill."
+      "notes": "Downstream consumer of @micthiesen/mitools; origin of the upkeep skill.",
+      "skillPath": ".agents/skills/sync"
     }
   },
   "resources": [

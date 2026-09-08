@@ -6,7 +6,7 @@ This file provides guidance to Codex and other coding agents working in this rep
 
 `@micthiesen/mitools` is Michael's shared TypeScript utility library, published to npm and consumed by sibling projects (`omni-notify`, `condo`, `lobster`, `presspods`). Since 4.0.0 it is an Effect 4 library: every I/O, timing, retry, resource or concurrency function returns a typed `Effect`, services are `Context.Service` classes with layers, and the library never runs an effect itself. It ships code **and** shared tooling config: `biome.shared.json`, `tsconfig/node.json` + `tsconfig/library.json`, and `baseVitestConfig` (`./vitest` export) are part of the published package; changes to them ripple into every consumer.
 
-Edit `AGENTS.md` and `.agents/skills/` directly. Codex is the primary harness; `CLAUDE.md` and `.claude/skills` link to these sources for Claude compatibility. `README.md` is the consumer front door, `MIGRATION.md` the v3 to v4 map, `CHANGELOG.md` the release notes; a change to a public API updates all three in the same commit.
+Edit `AGENTS.md` and `.agents/skills/` directly. Codex uses these native files directly; no compatibility links or generation step are needed. `README.md` is the consumer front door, `MIGRATION.md` the v3 to v4 map, `CHANGELOG.md` the release notes; a change to a public API updates all three in the same commit.
 
 ## Commands
 
