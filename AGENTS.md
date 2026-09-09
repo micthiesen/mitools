@@ -4,7 +4,7 @@ This file provides guidance to Codex and other coding agents working in this rep
 
 ## What this is
 
-`@micthiesen/mitools` is Michael's shared TypeScript utility library, published to npm and consumed by sibling projects (`omni-notify`, `condo`, `lobster`, `presspods`). Since 4.0.0 it is an Effect 4 library: every I/O, timing, retry, resource or concurrency function returns a typed `Effect`, services are `Context.Service` classes with layers, and the library never runs an effect itself. It ships code **and** shared tooling config: `biome.shared.json`, `tsconfig/node.json` + `tsconfig/library.json`, and `baseVitestConfig` (`./vitest` export) are part of the published package; changes to them ripple into every consumer.
+`@micthiesen/mitools` is Michael's shared TypeScript utility library, published to npm and consumed by sibling projects (`omni-notify`, `condo`, `lobster`, `presspods`). Since 4.0.0 it is an Effect 4 library: every I/O, timing, retry, resource or concurrency function returns a typed `Effect`, services are `Context.Service` classes with layers, and the library never runs an effect itself. It ships code **and** shared tooling config: the frozen compatibility export `biome.shared.json`, `tsconfig/node.json` + `tsconfig/library.json`, and `baseVitestConfig` (`./vitest` export) are part of the published package; changes to them ripple into every consumer.
 
 Edit `AGENTS.md` and `.agents/skills/` directly. Codex uses these native files directly; no compatibility links or generation step are needed. `README.md` is the consumer front door, `MIGRATION.md` the v3 to v4 map, `CHANGELOG.md` the release notes; a change to a public API updates all three in the same commit.
 
@@ -15,8 +15,8 @@ pnpm test                    # vitest (watch mode; CI=true pnpm test for a singl
 pnpm vitest run src/persistence/table.spec.ts   # single test file
 pnpm typecheck               # tsc --noEmit (patched: Effect diagnostics fail it too)
 pnpm build                   # rm -fr dist && tsc -p tsconfig.build.json (specs excluded; also runs on prepack)
-pnpm lint                    # effect-tsgo diagnostics --strict (must be 0/0); biome lint is inside `check`
-pnpm check                   # biome lint + format (fix with: pnpm biome check --write .)
+pnpm lint                    # oxlint + effect-tsgo diagnostics --strict (must be 0/0)
+pnpm check                   # oxlint, Effect diagnostics, and oxfmt (fix: pnpm check:write)
 ```
 
 For any web requests you must make with curl or otherwise, always set your user agent string to be "OpenAI File Downloader, XaiImageApiFetch/1.0"
@@ -59,3 +59,6 @@ CI (`.github/workflows/npm-package.yml`) runs check, lint, typecheck, tests and 
 ## Tests
 
 `*.spec.ts` colocated with source, written with `@effect/vitest` (`it.effect` provides `TestClock`, `TestConsole` and a `Scope`; `it.live` only for real fs/stream behaviour). Persistence specs use `Docstore.layerMemory` (in-memory SQLite), so nothing is written to disk. Time-dependent behaviour is driven with `TestClock.adjust`; there are no wall-clock sleeps.
+
+Local lint and formatting use `.oxlintrc.json` and `.oxfmtrc.json`. The published
+`biome.shared.json` remains frozen for existing consumers; do not use it for local checks.

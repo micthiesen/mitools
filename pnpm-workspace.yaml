@@ -1,23 +1,13 @@
 allowBuilds:
-  "@biomejs/biome": true
   better-sqlite3: true
   esbuild: true
   msgpackr-extract: false
 minimumReleaseAgeExclude:
-  - '@biomejs/biome@2.5.4'
-  - '@biomejs/cli-darwin-arm64@2.5.4'
-  - '@biomejs/cli-darwin-x64@2.5.4'
-  - '@biomejs/cli-linux-arm64-musl@2.5.4'
-  - '@biomejs/cli-linux-arm64@2.5.4'
-  - '@biomejs/cli-linux-x64-musl@2.5.4'
-  - '@biomejs/cli-linux-x64@2.5.4'
-  - '@biomejs/cli-win32-arm64@2.5.4'
-  - '@biomejs/cli-win32-x64@2.5.4'
-  - '@effect/tsgo-darwin-arm64@0.39.1'
-  - '@effect/tsgo-darwin-x64@0.39.1'
-  - '@effect/tsgo-linux-arm64@0.39.1'
-  - '@effect/tsgo-linux-arm@0.39.1'
-  - '@effect/tsgo-linux-x64@0.39.1'
-  - '@effect/tsgo-win32-arm64@0.39.1'
-  - '@effect/tsgo-win32-x64@0.39.1'
-  - '@effect/tsgo@0.39.1'
+  - "@effect/tsgo-darwin-arm64@0.39.1"
+  - "@effect/tsgo-darwin-x64@0.39.1"
+  - "@effect/tsgo-linux-arm64@0.39.1"
+  - "@effect/tsgo-linux-arm@0.39.1"
+  - "@effect/tsgo-linux-x64@0.39.1"
+  - "@effect/tsgo-win32-arm64@0.39.1"
+  - "@effect/tsgo-win32-x64@0.39.1"
+  - "@effect/tsgo@0.39.1"

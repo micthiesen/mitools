@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Format and lint (biome)
+      - name: Format and lint (Oxc and Effect)
         run: pnpm run check
 
       - name: Effect diagnostics

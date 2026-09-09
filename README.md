@@ -295,10 +295,14 @@ that take a runner).
 ```bash
 pnpm test        # vitest (CI=true pnpm test for one run)
 pnpm typecheck   # tsc --noEmit (patched with Effect diagnostics)
-pnpm lint        # effect-tsgo diagnostics --strict (Effect rules)
-pnpm check       # biome format + lint
+pnpm lint        # oxlint + strict Effect diagnostics
+pnpm check       # oxlint + Effect diagnostics + oxfmt
+pnpm check:write # apply Oxc lint fixes and formatting
 pnpm build
 ```
+
+Local tooling uses `.oxlintrc.json` and `.oxfmtrc.json`. The published
+`biome.shared.json` export remains frozen for consumers that still use Biome.
 
 Releases: bump `version`, commit `Bump to X.Y.Z`, push `main`; CI publishes.
 See [MIGRATION.md](./MIGRATION.md) for moving from v3 and [CHANGELOG.md](./CHANGELOG.md).

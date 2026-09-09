@@ -28,7 +28,7 @@ For each **major** bump (and for pnpm/Node majors), spawn parallel research agen
 
 - Version pins travel together: `.node-version`, `engines.node`, `engines.pnpm`, `packageManager` (CI reads `node-version-file: ".node-version"`).
 - Keep `@types/node` major **matched to the Node runtime major**, not latest.
-- Biome bumps must update the `$schema` version in **both** `biome.json` and `biome.shared.json` (the latter is published) plus the devDependency; run `pnpm biome migrate --write` if it flags the schema.
+- Update oxlint and oxfmt together with their local configs. Keep the published `biome.shared.json` compatibility export frozen for older consumers.
 - If pnpm goes to 11+: `package.json#pnpm` settings (`onlyBuiltDependencies`) move to `pnpm-workspace.yaml`.
 - Install: `CI=true pnpm install --no-frozen-lockfile`, then `CI=true pnpm update` for in-range minors. (`CI=true` avoids the no-TTY modules-purge abort; `--no-frozen-lockfile` because `CI=true` implies frozen.)
 - If Node changed: `fnm install <version>` locally and run all commands via `fnm exec --using=<version>` (this machine uses fnm; pnpm comes from corepack, so also set `COREPACK_ENABLE_DOWNLOAD_PROMPT=0`).
@@ -40,7 +40,7 @@ For each **major** bump (and for pnpm/Node majors), spawn parallel research agen
 pnpm run typecheck
 CI=true pnpm test
 pnpm run build
-pnpm run check          # biome
+pnpm run check          # Oxc + Effect diagnostics
 ```
 
 Also sanity-check the built output for a runtime break tests might miss: `node -e "import('./dist/logging/index.js').then(() => console.log('ok'))"` (any subpath export works; catches ESM/resolution slips in dist).

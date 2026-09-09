@@ -1,3 +1,4 @@
+// oxlint-disable typescript/no-this-alias -- Effect generator callbacks capture the instance before yielding.
 import { Clock, Data, Effect, Option } from "effect";
 import { causeMessage, type OperationError } from "../errors/index.js";
 import { kebabToTitleCase } from "../utils/strings.js";

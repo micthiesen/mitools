@@ -22,7 +22,6 @@ import { Cause, Effect, Exit } from "effect";
  * What a CLI program resolves to: an explicit exit code, or nothing when the
  * command simply succeeded.
  */
-// biome-ignore lint/suspicious/noConfusingVoidType: an Effect that returns nothing has `void`, not `undefined`
 export type MainResult = number | void;
 
 /** Options for {@link renderFailure}. */
