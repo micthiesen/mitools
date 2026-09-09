@@ -20,6 +20,22 @@
       ],
       "mode": "judgment",
       "notes": "Shared shape only (sync remote -> survey -> research majors -> apply -> verify -> ship). Steps are environment-specific: omni-notify has a frontend workspace, Dockerfile, and LLM model IDs; mitools is a published library whose CI publishes to npm on a version bump. Port procedure improvements, never the project-specific steps."
+    },
+    {
+      "path": ".oxlintrc.json",
+      "peers": [
+        "omni-notify"
+      ],
+      "mode": "judgment",
+      "notes": "Shared Oxc lint baseline and migration conventions; preserve each project's plugins, rule exceptions, and source exclusions. mitools also retains its separate strict Effect diagnostics gate."
+    },
+    {
+      "path": ".oxfmtrc.json",
+      "peers": [
+        "omni-notify"
+      ],
+      "mode": "judgment",
+      "notes": "Shared Oxc formatting conventions: two spaces, width 88, double quotes, semicolons, trailing commas, and no package.json sorting. Preserve project-specific exclusions; mitools keeps its published legacy Biome config unchanged."
     }
   ]
 }
